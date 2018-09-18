@@ -1300,10 +1300,8 @@ classdef vocalData < ephysData
                 end
                 if wellSorted
                     timestamps = getSpikes(vd,b,cell_k);
-                    [stabilityBounds, cut_call_data] = getCellInfo(vd,b,cell_k);
-                    fName = [output_dir vd.batNum{cell_k} '_' vd.cellInfo{cell_k} '.mat'];
-                    all_call_info = struct('timestamps',timestamps,'cut_call_data',cut_call_data,'stabilityBounds',stabilityBounds);
-                    save(fName,'-v7.3','-struct','all_call_info')
+                    fName = [output_dir vd.batNum{cell_k} '_' vd.cellInfo{cell_k} '.csv'];
+                    dlmwrite(fName,timestamps,'delimiter',',','precision','%3f');
                     usedCells(cell_k) = true;
                 end
                 
