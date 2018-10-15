@@ -7,6 +7,7 @@ classdef ephysData
         analysisDir 
         activeChannels
         spike_data_dir
+        lfp_data_dir
         expType
     end
     properties
@@ -34,6 +35,7 @@ classdef ephysData
                     ed.analysisDir = 'C:\Users\phyllo\Documents\Maimon\ephys\data_analysis_results\';
                     ed.activeChannels = {setdiff(0:15,4),setdiff(0:15,[1:4, 8, 9]),setdiff(0:15,12),setdiff(0:15,8)};
                     ed.spike_data_dir = 'E:\ephys\juvenile_recording\tetrode_data\';
+                    ed.lfp_data_dir = [];
                     
                 case 'adult'
                     
@@ -44,6 +46,7 @@ classdef ephysData
                     ed.analysisDir = 'E:\ephys\adult_recording\data_analysis_results\';
                     ed.activeChannels = [];
                     ed.spike_data_dir = 'E:\ephys\adult_recording\spike_data\';
+                    ed.lfp_data_dir = 'E:\ephys\adult_recording\lfp_data\';
                     
             end
             

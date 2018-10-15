@@ -7,7 +7,7 @@ classdef vocalData < ephysData
         frBandwidthRange = 2e-3:5e-3:1e-1
         kernelType = 'manual'
         dT = 5e-3
-        minCalls = 9
+        minCalls = 10
         minSpikes = 2
         nStd = 2
         consecBins = 15;
@@ -727,7 +727,7 @@ classdef vocalData < ephysData
             nonBoutCalls = callFR(3,:);
             
         end
-        function [low_avg_FR, high_avg_FR] = FR_by_audio_feature(vd,cData,varName,thresh,cell_ks,timeWin)
+        function [low_FR, high_FR] = FR_by_audio_feature(vd,cData,varName,thresh,cell_ks,timeWin)
             
              if nargin < 5
                 cell_ks = vd.responsiveCells;
@@ -737,8 +737,8 @@ classdef vocalData < ephysData
             end
             n_used_cells = length(cell_ks);
             
-            low_avg_FR = nan(1,n_used_cells);
-            high_avg_FR = nan(1,n_used_cells);
+            low_FR = cell(1,n_used_cells);
+            high_FR = cell(1,n_used_cells);
             
             min_used_calls = 10;
             
@@ -756,11 +756,8 @@ classdef vocalData < ephysData
                     for tt = 1:nTrial
                         fr(tt) = length(inRange(trialSpikes{tt},timeWin + [0 cLength(tt)]))/range(timeWin + [0 cLength(tt)]);
                     end
-                    lowFR = fr(low_idx);
-                    highFR = fr(high_idx);
-                    
-                    low_avg_FR(k) = mean(lowFR);
-                    high_avg_FR(k) = mean(highFR);
+                    low_FR{k} = fr(low_idx);
+                    high_FR{k} = fr(high_idx);
                 end
             end
         end
@@ -787,14 +784,14 @@ classdef vocalData < ephysData
             end
             
         end
-        function [callFR, out_of_call_FR] = getCallFR(vd,cData,cell_k,callOffset)
+        function [callFR, out_of_call_FR] = getCallFR(vd,cData,cell_k,callOffset,bootFlag)
             [~, callTrain] = callDataIdx(vd,cData,cell_k);
-            bootFlag = true;
+            trialIdx = vd.usedCalls{cell_k};
             if nargin == 3 
-                trialIdx = vd.usedCalls{cell_k};
                 callOffset = zeros(1,2);
+                bootFlag = true;
             elseif nargin == 4
-                trialIdx = vd.usedCalls{cell_k};
+                bootFlag = true;
             end
             
             out_of_call_FR = zeros(1,length(callTrain));
@@ -805,36 +802,38 @@ classdef vocalData < ephysData
                 callPos = [0 used_call_lengths(bout_k); callTrain(bout_k).relative_callPos];
                 callPos = callPos + repmat(callOffset,size(callPos,1),1);
                 spikes = used_call_spikes{bout_k};
-                call_spike_idx = false(1,length(spikes));
+                spike_counts = histcounts(spikes,[vd.time(1)-vd.dT vd.time]);
+                call_idx = false(1,length(vd.time));
                 for call_k = 1:size(callPos,1)
-                    [~,idx] = inRange(spikes,callPos(call_k,:));
-                    call_spike_idx = call_spike_idx | idx;
+                    [~,idx] = inRange(vd.time,callPos(call_k,:));
+                    call_idx = call_idx | idx;
                 end
-                call_time = sum(diff(callPos,[],2));
-                callFR(bout_k) = sum(call_spike_idx)/call_time;
+                call_time = sum(call_idx)*vd.dT;
+                callFR(bout_k) = sum(spike_counts(call_idx))/call_time;
                 
                 if bootFlag
                     bootFR = nan(1,vd.nBoot);
                     bout_call_lengths = diff(callPos,[],2);
+                    maxT = min(vd.spikeRange(end),max(callPos(:,2)));
+                    minT = 0;
                     for b = 1:vd.nBoot
-
-                        spikes = used_call_spikes{bout_k};
-                        call_spike_idx = false(1,length(spikes));
+                        boot_call_idx = false(1,length(vd.time));
                         for boot_call_k = 1:size(callPos,1)
-                            call_start = (vd.callRange(2) - bout_call_lengths(boot_call_k))*rand;
+                            call_start = (maxT-minT)*rand+minT;
                             boot_call_pos = [call_start call_start + bout_call_lengths(boot_call_k)];
-                            [~,idx] = inRange(spikes,boot_call_pos);
-                            call_spike_idx = call_spike_idx | idx;
+                            [~,idx] = inRange(vd.time,boot_call_pos);
+                            boot_call_idx = boot_call_idx | idx;
                         end
-                        bootFR(b) = sum(call_spike_idx)/call_time;
+                        boot_call_time = sum(boot_call_idx)*vd.dT;
+                        bootFR(b) = sum(spike_counts(boot_call_idx))/boot_call_time;
                     end
                     out_of_call_FR(bout_k) = mean(bootFR);
                 else
-                    spikeBounds = [0 min(vd.spikeRange(end),max(callPos(:,2))+1)];
-                    ICIs = [callPos(2:end,1); spikeBounds(2)] - callPos(:,2);
-                    non_call_time = sum(ICIs(ICIs>0));
-                    non_call_spike_idx = ~call_spike_idx & spikes>spikeBounds(1) & spikes<spikeBounds(2);
-                    out_of_call_FR(bout_k) = sum(non_call_spike_idx)/non_call_time;
+                    spikeBounds = [-1 min(vd.spikeRange(end),max(callPos(:,2))+1)];
+                    [~,spike_bounds_idx] = inRange(vd.time,spikeBounds);
+                    non_call_idx = ~call_idx & spike_bounds_idx;
+                    non_call_time = sum(non_call_idx)*vd.dT;                    
+                    out_of_call_FR(bout_k) = sum(spike_counts(non_call_idx))/non_call_time;
                 end
             end
         end
@@ -1086,7 +1085,7 @@ classdef vocalData < ephysData
             end
             total_session_length = abs(diff(sessionBounds));
         end
-        function [fr_to_session_calls, cell_ks] = get_fr_to_session_call_ratio(vd,cData,b)
+        function [fr_to_session_calls,percent_high_fr_calls,percent_session_calls,cell_ks] = get_fr_to_session_call_ratio(vd,cData,b)
             high_fr_call_info_fnames = dir([vd.baseDirs{b} 'bat' vd.batNums{b} '\**\call_info*high_fr*.mat']);
             percent_session_calls = zeros(1,length(high_fr_call_info_fnames));
             percent_high_fr_calls = zeros(1,length(high_fr_call_info_fnames));
@@ -1614,7 +1613,7 @@ switch vd.sortingMetric
     case 'ratio_and_distance'
         wellSorted = vd.LRatio(cell_k) <= vd.sortingThreshold(1) & vd.isolationDistance(cell_k) >= vd.sortingThreshold(2);
 end
-usable =  length(prePostSpikes) >= vd.minSpikes &&...
+usable =  (length(prePostSpikes)/sum(vd.usedCalls{cell_k})) >= vd.minSpikes &&...
     nTrial >= vd.minCalls &&...
     wellSorted;
 
