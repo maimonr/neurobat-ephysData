@@ -172,13 +172,7 @@ classdef vocalData < ephysData
                     for b = 1:nBats
                         spike_file_names = dir([vd.spike_data_dir '*.csv']);
                         spike_file_names = spike_file_names(arrayfun(@(x) contains(x.name,vd.batNums{b}),spike_file_names));
-                        
-                        try
-                            tetrodeDepths = readtable(fullfile(vd.baseDirs{b},'tetrode_depths',['tetrode_depths_' vd.batNums{b} '.csv']),'format',tt_depth_format);
-                            use_tetrode_depths = true;
-                        catch
-                            use_tetrode_depths = false;
-                        end
+                        tetrodeDepths = readtable(fullfile(vd.baseDirs{b},'tetrode_depths',['tetrode_depths_' vd.batNums{b} '.csv']),'format',tt_depth_format);
                         
                         for d = 1:length(spike_file_names)
                             cellInfo = regexp(spike_file_names(d).name,cellInfo_regexp_str,'match');
@@ -195,11 +189,8 @@ classdef vocalData < ephysData
                             vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                             vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
                             vd.expDay(cell_k) = datetime(cellInfo(1:8),'InputFormat',vd.dateFormat);
-                            if use_tetrode_depths
-                                vd.tetrodeDepth(cell_k) = tetrodeDepths{tetrodeDepths.Date==vd.expDay(cell_k),vd.tetrodeNum(cell_k)+1};
-                            else
-                                vd.tetrodeDepth(cell_k) = NaN;
-                            end
+                            vd.tetrodeDepth(cell_k) = tetrodeDepths{tetrodeDepths.Date==vd.expDay(cell_k),vd.tetrodeNum(cell_k)+1};
+                            
                             [stabilityBounds, cut_call_data] = getCellInfo(vd,b,cell_k);
                             timestamps = getSpikes(vd,b,cell_k);
                             
@@ -1391,16 +1382,9 @@ classdef vocalData < ephysData
                 case 'adult'
                     
                     try
-                        
                         timestamps = csvread(spikeDir);
                         
                     catch err
-                        
-                        if strcmp(err.identifier,'MATLAB:textscan:EmptyFormatString')
-                            timestamps = [];
-                        else
-                            rethrow(err)
-                        end
                         
                     end
                     

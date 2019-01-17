@@ -116,6 +116,9 @@ classdef ephysData
                 
                 case 'adult'
                     
+                    
+                    call_echo = ed.call_echo;
+                    
                     spikeDir = fullfile(baseDir,'spike_data',[batNum '_' cellInfo '.csv']);
                     %       If we want to calculate spike waveform stats, need to include path to actual .ntt file
                     ttDir = [];
@@ -126,13 +129,13 @@ classdef ephysData
                     idx = find(strcmp(cellInfo,{cell_stability_info.cellInfo}) & strcmp(batNum,{cell_stability_info.batNum}));
                     stabilityBounds = [cell_stability_info(idx).tsStart cell_stability_info(idx).tsEnd];
                     
-                    if strcmp(ed.call_echo,'call') % are we looking at calls or echolocation clicks?
+                    if strcmp(call_echo,'call') % are we looking at calls or echolocation clicks?
                         s = load(fullfile(call_data_dir,[exp_date_str '_cut_call_data.mat']));
                         cut_call_data = s.cut_call_data;
                         batIdx = strcmp({cut_call_data.batNum},batNum);
                         cut_call_data = cut_call_data(batIdx);
                         
-                    elseif strcmp(ed.call_echo,'echo')
+                    elseif strcmp(call_echo,'echo')
                         error('echolocation not yet implemented for adult data')
                     end
                     
@@ -206,6 +209,7 @@ classdef ephysData
                     expDate = cellInfo(1:strfind(cellInfo,ed.tetrodeStr)-1);
                     tetrodeNum = str2double(cellInfo(tt_num_idx));
                     cellNum = str2double(cellInfo(cluster_num_idx:end));
+                    call_echo = ed.call_echo;
                     
                     if cellNum < 10
                         sorted_cell_string = [ed.clusterStr '0'];
@@ -224,12 +228,12 @@ classdef ephysData
                     
                     try
                         
-                        if strcmp(ed.call_echo,'call') % are we looking at calls or echolocation clicks?
+                        if strcmp(call_echo,'call') % are we looking at calls or echolocation clicks?
                             s = load([audioDir 'cut_call_data.mat']);
                             cut_call_data = s.cut_call_data;
                             cut_call_data = cut_call_data(~[cut_call_data.noise]);
                             
-                        elseif strcmp(ed.call_echo,'echo')
+                        elseif strcmp(call_echo,'echo')
                             s = load([audioDir 'cut_echo_data.mat']);
                             cut_call_data = s.cut_call_data;
                             cut_call_data = cut_call_data(~[cut_call_data.noise]);
