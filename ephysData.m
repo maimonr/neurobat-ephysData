@@ -9,11 +9,9 @@ classdef ephysData
         spike_data_dir
         lfp_data_dir
         expType
-        tetrodeStr = 'TT';
-        clusterStr = '_SS_';
     end
     properties
-        call_echo = 'call'
+        callType = 'call'
     end
     
     methods
@@ -50,6 +48,17 @@ classdef ephysData
                     ed.spike_data_dir = 'E:\ephys\adult_recording\spike_data\';
                     ed.lfp_data_dir = [];
                     
+                case 'adult_operant'
+                    
+                    ed.batNums = {'59886','65705','71382','65702'};
+                    ed.baseDirs = repmat({'E:\ephys\adult_operant_recording\'},1,length(ed.batNums));
+                    ed.dateFormat = 'yyyyMMdd';
+                    ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
+                    ed.analysisDir = 'E:\ephys\adult_operant_recording\data_analysis_results\';
+                    ed.activeChannels = {setdiff(0:15,10),0:15,0:15,setdiff(0:15,5)};
+                    ed.spike_data_dir = 'E:\ephys\adult_operant_recording\spike_data\';
+                    ed.lfp_data_dir = [];
+                    
                     
                 case 'adult_wujie'
                     
@@ -57,10 +66,10 @@ classdef ephysData
                     ed.baseDirs = repmat({'E:\ephys\adult_recording\wujie_data\'},1,length(ed.batNums));
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
-                    ed.analysisDir = 'E:\ephys\adult_recording\data_analysis_results\';
+                    ed.analysisDir = 'E:\ephys\wujie_adult_recording\data_analysis_results\';
                     ed.activeChannels = [];
-                    ed.spike_data_dir = 'E:\ephys\adult_recording\spike_data\';
-                    ed.lfp_data_dir = 'E:\ephys\adult_recording\lfp_data\';
+                    ed.spike_data_dir = 'E:\ephys\wujie_adult_recording\spike_data\';
+                    ed.lfp_data_dir = 'E:\ephys\wujie_adult_recording\lfp_data\';
                     
             end
             
