@@ -1,7 +1,8 @@
 classdef ephysData
     properties 
         baseDirs
-        batNums 
+        batNums
+        boxNums
         dateFormat
         birthDates 
         analysisDir 
@@ -51,6 +52,7 @@ classdef ephysData
                 case 'adult_operant'
                     
                     ed.batNums = {'59886','65705','71382','65702'};
+                    ed.boxNums = {'1','1','2','2'};
                     ed.baseDirs = repmat({'E:\ephys\adult_operant_recording\'},1,length(ed.batNums));
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
