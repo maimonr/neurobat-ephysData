@@ -357,6 +357,7 @@ function [boutSpikes,pre_loaded_spikes] = get_bout_spike_times(bc,vdCall,bout_k,
 call_spike_range = bc.callPos{bout_k}(1) + bc.spikeRange;
 nCells = length(bc.cellNums{bout_k});
 boutSpikes = cell(1,nCells);
+b = find(strcmp(bc.batNum{bout_k},bc.batNums));
 
 if isempty([pre_loaded_spikes.cellInfo]) || ~isempty(setdiff(bc.cellInfo{bout_k},{pre_loaded_spikes.cellInfo}))
     pre_loaded_spikes = struct('timestamps',[],'cellInfo',[]);
