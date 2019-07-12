@@ -38,6 +38,7 @@ classdef bout_call_data < ephysData
         rhythmSeqs
         bout_spike_rhythm_phase
         treatment
+        raw_data_filter
     end
     
     properties (Dependent)
@@ -59,6 +60,14 @@ classdef bout_call_data < ephysData
             end
             debugFlag = false;
             bc.batNums = cData.batNums;
+            bc.fs = cData.fs;
+            bc.expType = vdCall.expType;
+            bc.callType = vdCall.callType;
+            
+            if strcmp(bc.expType,'adult_operant') && strcmp(bc.callType,'operant')
+               [b,a] = butter(4,200/(bc.fs/2),'high'); 
+               bc.raw_data_filter = struct('b',b,'a',a);
+            end
             
             [b,a] = butter(bc.lp_filt_order,bc.lp_filt_stopband_freq/(bc.fs/2),'low');
             feature_filter_coefs = [b;a];
@@ -100,7 +109,9 @@ classdef bout_call_data < ephysData
                     call_fNames = cData('callID',calls_in_bout).fName;
                     n_calls_in_bout = length(calls_in_bout);
                     
-                    if n_calls_in_bout<bc.min_calls_in_bout
+                    bout_batNums = cData('callID',calls_in_bout).batNum;
+                    
+                    if n_calls_in_bout<bc.min_calls_in_bout || any(cellfun(@iscell,bout_batNums)) || length(unique(bout_batNums))>1
                         success = false;
                     else
                         bout_file_callpos = [file_callPos(interBoutIdx(bout_k),1) file_callPos(interBoutIdx(bout_k+1)-1,2)];
@@ -109,7 +120,7 @@ classdef bout_call_data < ephysData
                     
                     if success
                         if debugFlag
-                            sound(boutCallWF,200e3)
+                            sound(boutCallWF,bc.fs)
                         end
                         boutCalls{b}{bout_k} = calls_in_bout;
                         features{b}{bout_k} = get_bout_feature(bc,boutCallWF,feature_filter_coefs);                    
@@ -137,7 +148,8 @@ classdef bout_call_data < ephysData
             
             bc.batNum = horzcat(bNum{:})';
             
-            bc.daysOld = cellfun(@(x) cData('callID',x(1)).daysOld,bc.boutCalls);
+            bc.daysOld = cellfun(@(x) cData('callID',x(1)).daysOld,bc.boutCalls,'un',0);
+            bc.daysOld = cellfun(@(x) x(1),bc.daysOld);
             
             bout_call_pos = cellfun(@(x) [cData('callID',x(1)).callPos cData('callID',x(end)).callPos],bc.boutCalls,'un',0);
             bc.callPos = cellfun(@(x) [x(1) x(end)]',bout_call_pos,'un',0);
@@ -159,6 +171,10 @@ classdef bout_call_data < ephysData
                     bc.bout_spike_rhythm_phase{bout_k} = get_spike_rhythm_phase(bc,bout_k,rhythm_filter_coefs);
                 end
             end
+        end
+        
+        function n = numArgumentsFromSubscript(~,~,~)
+            n = 1;
         end
         
         function varargout = subsref(bc,S)
@@ -308,6 +324,31 @@ classdef bout_call_data < ephysData
         
         function [success,boutCallWF,sample_offset] = get_bout_WF_manual(bc,nCalls,call_fNames,file_callPos)
             [success,boutCallWF,sample_offset] = get_bout_WF(bc,nCalls,call_fNames,file_callPos);
+        end
+        
+        function [callWF, callPos_cat, nSample] = concatenate_bouts(bc,cData,call_ks,silenceRange)
+            
+            nCall = length(call_ks);
+            callWF = [];
+            callPos_cat = [];
+            nSample = zeros(1,nCall+1);
+            k = 1;
+            for call_k = call_ks
+                
+                bout_call_pos = vertcat(cData('callID',bc.boutCalls{call_k}).file_call_pos);
+                bout_call_pos = bout_call_pos - bout_call_pos(1) + 1 + nSample(k);
+                if any(bout_call_pos < 0)
+                    continue
+                end
+                
+                boutCallWF = bc.get_bout_WF(cData,call_k);
+                n_noise_sample = randi(silenceRange*bc.fs);
+                
+                callWF = [callWF boutCallWF zeros(1,n_noise_sample)];
+                callPos_cat = [callPos_cat; bout_call_pos];
+                k = k + 1;
+                nSample(k) = length(callWF);
+            end
         end
         
         function feature_fs = get.feature_fs(obj)
@@ -496,12 +537,19 @@ end
 
 fNames_in_bout = unique(call_fNames);
 n_wav_files = length(fNames_in_bout);
+file_callPos_by_file = zeros(n_wav_files,2);
 
-boutWF = [];
+boutCallWF = [];
 nSamp_per_file = zeros(1,n_wav_files+1);
 for f = 1:n_wav_files
     info = audioinfo(fNames_in_bout{f});
     nSamp_per_file(f+1) = info.TotalSamples;
+    if f == 1
+        file_callPos_by_file(f,:) = file_callPos;
+    else
+        file_callPos_by_file(f-1,2) = nSamp_per_file(f);
+        file_callPos_by_file(f,:) = [1 file_callPos(2)];
+    end
 end
 nSamp_per_file = cumsum(nSamp_per_file);
 boutCallPos = [file_callPos(1) nSamp_per_file(n_wav_files)+file_callPos(2)];
@@ -513,9 +561,13 @@ if abs(diff(boutCallPos))/bc.fs < bc.min_bout_length || abs(diff(boutCallPos))/b
 end
 
 for f = 1:n_wav_files
-    callData = audioread(fNames_in_bout{f});
+    callData = audioread(fNames_in_bout{f},file_callPos_by_file(f,:));
     callData = reshape(callData,1,numel(callData));
-    boutWF = [boutWF callData];
+    boutCallWF = [boutCallWF callData];
+end
+
+if ~isempty(bc.raw_data_filter)
+   boutCallWF = filtfilt(bc.raw_data_filter.b,bc.raw_data_filter.a,boutCallWF); 
 end
 
 sample_offset = zeros(1,nCalls);
@@ -525,7 +577,6 @@ for k = 1:nCalls
 end
 
 success = true;
-boutCallWF = boutWF(boutCallPos(1):boutCallPos(2));
 
 end
 

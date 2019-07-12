@@ -10,8 +10,6 @@ classdef ephysData
         spike_data_dir
         lfp_data_dir
         expType
-    end
-    properties
         callType = 'call'
     end
     
@@ -45,7 +43,7 @@ classdef ephysData
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
                     ed.analysisDir = 'E:\ephys\adult_recording\data_analysis_results\';
-                    ed.activeChannels = {0:15,0:15,0:15,setdiff(0:15,[7 8])};
+                    ed.activeChannels = {0:15,0:15,0:15,[5:8 13:16]};
                     ed.spike_data_dir = 'E:\ephys\adult_recording\spike_data\';
                     ed.lfp_data_dir = [];
                     
