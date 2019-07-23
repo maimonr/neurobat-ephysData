@@ -15,7 +15,6 @@ classdef vocalData < ephysData
         sortingThreshold = 2
         latencyType = 'cusum'
         latencyRange = [-2 2]
-        manualCorrect = 0
         constantBW = 0.05
         preCall = 0.5
         postCall = 0.5
@@ -31,22 +30,22 @@ classdef vocalData < ephysData
         waveformSamples = 32;
         timeWarp = false
         warp_call_length = 0.1
-        baselineMethod = 'sessionFR'
+        baselineMethod = 'preCall'
         n_baseline_samples = 1e2
         baseline_sample_length = 5
         exclude_neighboring_calls = true
         operant_reward_status = 'rewardedOnly'
         selectCalls = 'selfCall'
-        cellType = 'multiUnit'
+        cellType = 'singleUnit'
         clusterStr = '_SS_'
         tetrodeStr = 'TT'
+        onset_or_offset = 'onset'
         
+        frBandwidth
         usedCalls
         isolationDistance
         LRatio
         sortingQuality
-        manual_correct_info
-        onset_or_offset
         daysOld
         batNum
         cellInfo
@@ -54,7 +53,6 @@ classdef vocalData < ephysData
         callSpikes
         callNum
         callLength
-        frBandwidth
         trial_spike_train
         stored_trial_fr
         avgFR
@@ -66,40 +64,34 @@ classdef vocalData < ephysData
         respValency
         respStrength
         usable
-        time
-        nCells
         meanFR
         medianISI
         peak2trough
         spikeWidth
         avg_spike
         duration
-        misclassified
         tetrodeNum
         tetrodeDepth
     end
-    properties (SetAccess = public)
-        n_age_bins = 7
-        manual_responsive_cells = []
-        manual_latency
+    
+    properties (SetAccess = private)
+        misclassified
     end
+    
     properties (Dependent)
+        time
         responsiveCells
-        youngestAge
-        oldestAge
-        ageBins
+        responsiveIdx 
         responsive_cells_by_bat
-        weeks_old_bins
-        avgLatency
-        stdLatency
-        bsStdLatencyCI
+        nCells
+        cellTable
     end
     methods
         function vd = vocalData(varargin)
             
-            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls'};
-            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15};
-            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls','operant_reward_status'};
+            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15,'rewardedOnly'};
+            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls,operant_reward_status] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             
             vd = vd@ephysData(expType);
             
@@ -108,14 +100,13 @@ classdef vocalData < ephysData
             vd.selectCalls = selectCalls;
             vd.cellType = cellType;
             vd.minCalls = minCalls;
+            vd.operant_reward_status = operant_reward_status;
             
             if ~isempty(vd_update)
                 vd = vd_update;
             end
             
             use_select_cells = ~isempty(selectCells);
-            
-            vd.time = vd.callRange(1):vd.dT:vd.callRange(2);
             
             vd.expDay = datetime([],[],[]);
             
@@ -142,7 +133,7 @@ classdef vocalData < ephysData
                         cellInfo_regexp_str = '\d{8}_TT\d';
                 end
                 
-                vd.nCells = length(spike_file_names);
+                nCells_to_process = length(spike_file_names);
                 
                 [vd.isolationDistance, vd.LRatio, vd.sortingQuality, vd.avgBaseline,...
                     vd.devBaseline, vd.respValency, vd.respStrength, vd.meanFR,...
@@ -181,10 +172,10 @@ classdef vocalData < ephysData
                         vd.cellInfo{cell_k} = cellInfo;
                         vd.tetrodeNum(cell_k) = str2double(cellInfo(strfind(cellInfo,ttString)+length(ttString)));
                         
-                        if strcmp(vd.cellType,'singleUnit')
+                        % get sorting quality for this cell
+                        if strcmp(vd.cellType,'singleUnit') 
                             sortingInfo_idx = strcmp({sortingInfo.cellInfo},cellInfo) & strcmp({sortingInfo.batNum},vd.batNum{cell_k});
                             if strcmp(vd.expType,'adult')
-                                % get sorting quality for this cell
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance;
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
@@ -192,14 +183,12 @@ classdef vocalData < ephysData
                                 
                                 if strcmp(vd.callType,'call') % sorting quality for this experiment is calculated for each session
                                     sorting_info_str = 'communication';
-                                elseif strcmp(vd.callType,'operant')
+                                elseif any(strcmp(vd.callType,{'operant','operant_reward'}))
                                     sorting_info_str = 'operant';
                                 end
-                                
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance.(sorting_info_str);
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio.(sorting_info_str);
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality.(sorting_info_str);
-                                
                             end
                         end
                         
@@ -233,7 +222,7 @@ classdef vocalData < ephysData
                             [vd.latency(cell_k), vd.respType{cell_k}, vd.respValency(cell_k), vd.respStrength(cell_k)] = calculateLatency(vd,cell_k);
                         end
                         
-                        progress = 100*(cell_k/vd.nCells);
+                        progress = 100*(cell_k/nCells_to_process);
                         
                         if mod(progress,10) < mod(lastProgress,10)
                             fprintf('%d %% of cells processed\n',round(progress));
@@ -252,7 +241,7 @@ classdef vocalData < ephysData
                 spike_file_name_dlm = '_';
                 spike_file_name_format = 'bbbbb_yyyymmddTTt_SS_ss';
                 nBats = length(vd.batNums);
-                vd.nCells = length(spike_file_names);
+                nCells_to_process = length(spike_file_names);
                 
                 [vd.avgBaseline, vd.devBaseline, vd.respValency,...
                     vd.respStrength, vd.meanFR, vd.latency, vd.respType,...
@@ -297,7 +286,7 @@ classdef vocalData < ephysData
                             [vd.latency(cell_k), vd.respType{cell_k}, vd.respValency(cell_k), vd.respStrength(cell_k)] = calculateLatency(vd,cell_k);
                         end
                         
-                        progress = 100*(cell_k/vd.nCells);
+                        progress = 100*(cell_k/nCells_to_process);
                         
                         if mod(progress,10) < mod(lastProgress,10)
                             fprintf('%d %% of cells processed\n',round(progress));
@@ -316,7 +305,7 @@ classdef vocalData < ephysData
                 sortedCells = load([vd.analysisDir 'sortedCells.mat']);
                 sortingInfo = load([vd.analysisDir 'sortingInfo.mat']);
                 sortingInfo = sortingInfo.sortingInfo ;
-                vd.nCells = length(sortedCells.cellList);
+                nCells_to_process = length(spike_file_names);
                 
                 [vd.isolationDistance, vd.LRatio, vd.sortingQuality, vd.avgBaseline,...
                     vd.devBaseline, vd.respValency, vd.respStrength, vd.meanFR,...
@@ -371,7 +360,7 @@ classdef vocalData < ephysData
                             [vd.latency(cell_k), vd.respType{cell_k}, vd.respValency(cell_k), vd.respStrength(cell_k)] = calculateLatency(vd,cell_k);
                         end
                         
-                        progress = 100*(cell_k/vd.nCells);
+                        progress = 100*(cell_k/nCells_to_process);
                         
                         if mod(progress,10) < mod(lastProgress,10)
                             fprintf('%d %% of cells processed\n',round(progress));
@@ -522,6 +511,8 @@ classdef vocalData < ephysData
                     'min_responsive_trials','responsive_nStd_over_baseline',...
                     'min_fraction_responsive_trials','min_responsive_length'}))
                 vd = updateLatency(vd);
+            else
+               disp('No associated update function')
             end
             
         end
@@ -573,6 +564,8 @@ classdef vocalData < ephysData
                 lineColor = 'b';
             elseif strcmp(vd.callType,'operant')
                 lineColor = 'g';
+            elseif strcmp(vd.callType,'operant_reward')
+                lineColor = 'cyan';
             end
             
             if nargin < 3
@@ -693,27 +686,26 @@ classdef vocalData < ephysData
                 close(h);
             end
         end
-        function [max_fr_sort_idx,max_fr_time] = plot_fr_heatmap(vd,cell_ks,axisHandle,params)
+        function [fr_sort_idx,fr_time] = plot_fr_heatmap(vd,cell_ks,axisHandle,params)
             
-            max_fr_time = zeros(1,length(cell_ks));
+            fr_time = zeros(1,length(cell_ks));
             [t,t_idx] = inRange(vd.time,params.xlims);
             avg_trial_fr = zeros(length(cell_ks),sum(t_idx));
             k = 1;
             for cell_k = cell_ks
-                used_calls = find(vd.usedCalls{cell_k});
+                used_calls = vd.usedCalls{cell_k};
                 trialFR = vd.trialFR(cell_k);
-                nTrial = length(used_calls);
-                trainIdx = 1:2:nTrial;
-                testIdx = setdiff(1:nTrial,trainIdx);
-                avg_trial_fr(k,:) = zscore(nanmean(trialFR(used_calls(testIdx),t_idx),1));
-                avg_trial_fr_train = zscore(nanmean(trialFR(used_calls(trainIdx),t_idx),1));
-                [~,idx] = max(avg_trial_fr_train);
-                max_fr_time(k) = t(idx);
+                avg_trial_fr(k,:) = zscore(nanmean(trialFR(used_calls,t_idx),1));
+                if params.resp_valence_flag 
+                    avg_trial_fr(k,:) = avg_trial_fr(k,:)*vd.respValency(cell_k);
+                end
+                [~,idx] = max(avg_trial_fr(k,:));
+                fr_time(k) = t(idx);
                 k = k + 1;
             end
             
-            [max_fr_sort,max_fr_sort_idx] = sort(max_fr_time);
-            imagesc(axisHandle,t,1:length(cell_ks),avg_trial_fr(max_fr_sort_idx,:));
+            [fr_time_sort,fr_sort_idx] = sort(fr_time);
+            imagesc(axisHandle,t,1:length(cell_ks),avg_trial_fr(fr_sort_idx,:));
             axisHandle.YDir = 'normal';
             caxis(axisHandle,[-1 3])
             axisHandle.XLabel.String = 'Time (s)';
@@ -724,16 +716,18 @@ classdef vocalData < ephysData
             axisHandle.YTick = yticks_interval:yticks_interval:length(cell_ks);
             axisHandle.XTick = sort([params.xlims 0]);
             axisHandle.XLim = params.xlims;
-            axisHandle.YLim = [0 length(cell_ks)];
+            axisHandle.YLim = [1 length(cell_ks)+1];
             axisHandle.Box = 'off';
             axisHandle.TickLength = [0 0];
             axisHandle.PlotBoxAspectRatio = ones(1,3);
             
-            lm = fitlm(max_fr_sort,1:length(cell_ks));
-            hold(axisHandle,'on')
-            x = [min(max_fr_time) max(max_fr_time)];
-            y = lm.Coefficients.Estimate(1) + lm.Coefficients.Estimate(2)*x;
-            plot(x,y,'r--','lineWidth',3)
+            if params.plot_fit_line
+                lm = fitlm(fr_time_sort,1:length(cell_ks));
+                hold(axisHandle,'on')
+                x = [min(fr_time) max(fr_time)];
+                y = lm.Coefficients.Estimate(1) + lm.Coefficients.Estimate(2)*x;
+                plot(x,y,'r--','lineWidth',3)
+            end
             
         end
         function [idx, callTrain] = callDataIdx(vd,cData,cell_k)
@@ -762,6 +756,7 @@ classdef vocalData < ephysData
                 
             end
         end
+        
         function boutWF = getBoutWF(vd,cData,cell_k,call_k)
             [idx,callTrain] = callDataIdx(vd,cData,cell_k);
             bout_call_idx = [callTrain(call_k).idx];
@@ -771,45 +766,53 @@ classdef vocalData < ephysData
                 boutWF = [boutWF zeros(1,round(cData.fs*(bout_call_pos(k+1,1)-bout_call_pos(k,2)))) cData.callWF{bout_call_idx(k)}'];
             end
         end
-        function [boutCallWF,bout_t,csc,csc_t,callSpikes] = get_call_bout_csc_spikes(vd,cData,bcData,cell_ks,call_k,csc_nums)
-            call_offset = 0.2;
-            filter_cutoff_frequencies=[600 6000];
-            b = find(strcmp(vd.batNums,vd.batNum{cell_ks(1)}));
-            expDate = vd.cellInfo{cell_ks(1)}(1:strfind(vd.cellInfo{cell_ks(1)},vd.tetrodeStr)-1);
-            base_dir = [vd.baseDirs{b} 'bat' vd.batNum{cell_ks(1)} filesep 'neurologger_recording' expDate filesep];
-            trial_used_calls = find(vd.usedCalls{cell_ks(1)});
-            [~,cut_call_data,audio2nlg] = get_cell_info(vd,cell_ks(1));
-            [~,callTrain] = callDataIdx(vd,cData,cell_ks(1));
-            cp = repmat(cut_call_data(trial_used_calls(call_k)).corrected_callpos(1),1,2) + 1e3.*[-call_offset max(callTrain(call_k).relative_callPos(:))+call_offset];
-            
+        function [boutCallWF,bout_t,csc,csc_t,callSpikes,batNum,bout_call_nums] = get_call_bout_csc_spikes(vd,cData,bcData,callNum,call_offset,csc_nums)
+            cell_ks = find(cellfun(@(cell_call_nums) ismember(callNum,cell_call_nums),vd.callNum));
+            batNum = vd.batNum(cell_ks);
             callSpikes = cell(1,length(cell_ks));
             for k = 1:length(cell_ks)
-                callSpikes{k} = vd.callSpikes{cell_ks(k)}{trial_used_calls(call_k)};
+                trial_idx = vd.callNum{cell_ks(k)} == callNum;
+                callSpikes{k} = vd.callSpikes{cell_ks(k)}{trial_idx};
             end
+            boutSeparation = 1;
+            bout_call_nums = get_call_bout_nums(cData,callNum,boutSeparation);
+            call_fNames = cData('callID',bout_call_nums).fName;
+            file_callPos = cData('callID',bout_call_nums).file_call_pos;
+            [~,boutCallWF] = get_bout_WF_manual(bcData,cData,call_fNames,file_callPos([1 end]),call_offset);
+  
+            bout_call_length = length(boutCallWF)/cData.fs;
+            bout_t = linspace(-call_offset,bout_call_length-call_offset,length(boutCallWF));
             
-            csc_t = cell(1,length(csc_nums));
-            csc = cell(1,length(csc_nums));
-            filter_loaded = false;
-            for k = 1:length(csc_nums)
-                tsData = load([base_dir 'nlxformat' filesep 'CSC' num2str(csc_nums(k)) '.mat']);
-                if ~filter_loaded
-                    sampling_freq=1/(tsData.sampling_period_usec/1e6);
-                    [b,a]=butter(6,filter_cutoff_frequencies/(sampling_freq/2),'bandpass');
-                    filter_loaded = true;
+            if nargin > 5
+                b = find(strcmp(vd.batNums,vd.batNum{cell_ks(1)}));
+                [~,cut_call_data,audio2nlg] = get_cell_info(vd,cell_ks(1));
+                [~,callTrain] = callDataIdx(vd,cData,cell_ks(1));
+                expDate = vd.cellInfo{cell_ks(1)}(1:strfind(vd.cellInfo{cell_ks(1)},vd.tetrodeStr)-1);
+                base_dir = [vd.baseDirs{b} 'bat' vd.batNum{cell_ks(1)} filesep 'neurologger_recording' expDate filesep];
+                filter_cutoff_frequencies=[600 6000];
+                csc_t = cell(1,length(csc_nums));
+                csc = cell(1,length(csc_nums));
+                filter_loaded = false;
+                call_idx = [cut_call_data.uniqueID] == callNum;
+                cp = repmat(cut_call_data(call_idx).corrected_callpos(1),1,2) + 1e3.*[-call_offset max(callTrain(callNum).relative_callPos(:))+call_offset];
+                for k = 1:length(csc_nums)
+                    tsData = load([base_dir 'nlxformat' filesep 'CSC' num2str(csc_nums(k)) '.mat']);
+                    if ~filter_loaded
+                        sampling_freq=1/(tsData.sampling_period_usec/1e6);
+                        [b,a]=butter(6,filter_cutoff_frequencies/(sampling_freq/2),'bandpass');
+                        filter_loaded = true;
+                    end
+                    nSamp = length(tsData.AD_count_int16);
+                    timestamps_usec = get_timestamps_for_Nlg_voltage_all_samples(nSamp,tsData.indices_of_first_samples,tsData.timestamps_of_first_samples_usec,tsData.sampling_period_usec);
+                    timestamps_msec = 1e-3*timestamps_usec - audio2nlg.first_nlg_pulse_time;
+                    [~,csc_idx] = inRange(timestamps_msec,cp);
+                    csc{k} = filtfilt(b,a,double(tsData.AD_count_to_uV_factor*tsData.AD_count_int16(csc_idx)));
+                    csc_t{k} = linspace(-call_offset,1e-3*diff(cp)-call_offset,length(csc{k}));
                 end
-                nSamp = length(tsData.AD_count_int16);
-                timestamps_usec = get_timestamps_for_Nlg_voltage_all_samples(nSamp,tsData.indices_of_first_samples,tsData.timestamps_of_first_samples_usec,tsData.sampling_period_usec);
-                timestamps_msec = 1e-3*timestamps_usec - audio2nlg.first_nlg_pulse_time;
-                [~,csc_idx] = inRange(timestamps_msec,cp);
-                csc{k} = filtfilt(b,a,double(tsData.AD_count_to_uV_factor*tsData.AD_count_int16(csc_idx)));
-                csc_t{k} = linspace(-call_offset,1e-3*diff(cp)-call_offset,length(csc{k}));
-            end
-            
-            boutIdx = find(cellfun(@(x) any(ismember(cData.callID(callTrain(call_k).idx),x)),bcData.boutCalls));
-            boutCallWF = get_bout_WF(bcData,cData,boutIdx);
-            boutCallWF = [zeros(1,call_offset*cData.fs) boutCallWF zeros(1,call_offset*cData.fs)];
-            bout_t = linspace(-call_offset,-call_offset+length(boutCallWF)/250e3,length(boutCallWF));
-            
+            else
+                csc_t = [];
+                csc = [];
+            end            
         end
         function [spikeCorr,p,spikes1,spikes2] = scCorr(vd,cell_1,cell_2,period)
             if (strcmp(vd.batNum{cell_1},vd.batNum{cell_2}) && vd.expDay(cell_1) == vd.expDay(cell_2))
@@ -848,6 +851,7 @@ classdef vocalData < ephysData
                 return
             end
         end
+        
         function [leadingCalls, boutCalls, nonBoutCalls] = FR_by_bout_calls(vd,cData,thresh,cell_ks,timeWin)
             
             if nargin < 4
@@ -903,7 +907,6 @@ classdef vocalData < ephysData
             
             for k = 1:n_used_cells
                 cell_k = cell_ks(k);
-                %%
                 nTrial = length(vd.callSpikes{cell_k});
                 idx = ismember(cData.callID, vd.callNum{cell_k}) & strcmp(cData.batNum,vd.batNum(cell_k)) & cData.expDay == vd.expDay(cell_k);
                 low_idx = find(cData.(varName)(idx)<thresh);
@@ -918,30 +921,7 @@ classdef vocalData < ephysData
                     low_FR{k} = fr(low_idx);
                     high_FR{k} = fr(high_idx);
                 end
-                %%
             end
-        end
-        function cells = simulResp(vd,varargin)
-            if ~isempty(varargin)
-                resp_cells_by_bat = varargin{1};
-            else
-                resp_cells_by_bat = vd.responsive_cells_by_bat;
-            end
-            k = 1;
-            cells = {};
-            for b = 1:length(vd.batNums)
-                respCells = resp_cells_by_bat{b};
-                for cell_k = respCells
-                    respCells = setdiff(respCells,cell_k);
-                    idx = find(vd.expDay(respCells) == vd.expDay(cell_k));
-                    if ~isempty(idx)
-                        cells{k} = [cell_k respCells(idx)];
-                        respCells = setdiff(respCells,respCells(idx));
-                        k = k+1;
-                    end
-                end
-            end
-            
         end
         function [callFR, out_of_call_FR] = getCallFR(vd,cData,cell_k,callOffset,bootFlag)
             [~, callTrain] = callDataIdx(vd,cData,cell_k);
@@ -955,13 +935,12 @@ classdef vocalData < ephysData
             
             out_of_call_FR = zeros(1,length(callTrain));
             callFR = zeros(1,length(callTrain));
-            used_call_spikes = vd.callSpikes{cell_k}(trialIdx);
+            used_call_spike_trains = vd.trial_spike_train{cell_k}(trialIdx,:);
             used_call_lengths = vd.callLength{cell_k}(trialIdx);
             for bout_k = 1:length(callTrain)
                 callPos = [0 used_call_lengths(bout_k); callTrain(bout_k).relative_callPos];
                 callPos = callPos + repmat(callOffset,size(callPos,1),1);
-                spikes = used_call_spikes{bout_k};
-                spike_counts = histcounts(spikes,[vd.time(1)-vd.dT vd.time]);
+                spike_counts = full(used_call_spike_trains(bout_k,:));
                 call_idx = false(1,length(vd.time));
                 for call_k = 1:size(callPos,1)
                     [~,idx] = inRange(vd.time,callPos(call_k,:));
@@ -996,6 +975,43 @@ classdef vocalData < ephysData
                 end
             end
         end
+        
+        function cells = simulResp(vd,varargin)
+            if ~isempty(varargin)
+                resp_cells_by_bat = varargin{1};
+            else
+                resp_cells_by_bat = vd.responsive_cells_by_bat;
+            end
+            k = 1;
+            cells = {};
+            for b = 1:length(vd.batNums)
+                respCells = resp_cells_by_bat{b};
+                for cell_k = respCells
+                    respCells = setdiff(respCells,cell_k);
+                    idx = find(vd.expDay(respCells) == vd.expDay(cell_k));
+                    if ~isempty(idx)
+                        cells{k} = [cell_k respCells(idx)];
+                        respCells = setdiff(respCells,respCells(idx));
+                        k = k+1;
+                    end
+                end
+            end
+            
+        end
+        function latency = trialLatency(vd,cell_k,trialIdx)
+            if nargin < 3
+                trialIdx = vd.usedCalls{cell_k};
+            end
+            switch vd.latencyType
+                case 'cusum'
+                    [~,~,~,latency]  = cusumResponsive(vd,cell_k,trialIdx);
+                case 'trialBased'
+                    [~, ~, ~, latency]  = trialBasedResponsive(vd,cell_k,trialIdx);
+                case 'std_above_baseline'
+                    [~, ~, ~, latency]  = std_above_baseline_responsive(vd,cell_k,trialIdx);
+                    
+            end
+        end
         function [resp_trials, resp_callIDs, non_resp_callIDs] = get_responsive_trials(vd,cell_k,respRange,trialIdx)
             
             if nargin < 3
@@ -1018,6 +1034,7 @@ classdef vocalData < ephysData
             resp_callIDs = callIDs(resp_trials);
             non_resp_callIDs = callIDs(~resp_trials);
         end
+        
         function call_info = get_call_bhv_info(vd,cell_k)
             if strcmp(vd.batNum{cell_k},vd.batNums{4})
                 
@@ -1184,20 +1201,7 @@ classdef vocalData < ephysData
                 p = NaN;
             end
         end
-        function latency = trialLatency(vd,cell_k,trialIdx)
-            if nargin < 3
-                trialIdx = vd.usedCalls{cell_k};
-            end
-            switch vd.latencyType
-                case 'cusum'
-                    [~,~,~,latency]  = cusumResponsive(vd,cell_k,trialIdx);
-                case 'trialBased'
-                    [~, ~, ~, latency]  = trialBasedResponsive(vd,cell_k,trialIdx);
-                case 'std_above_baseline'
-                    [~, ~, ~, latency]  = std_above_baseline_responsive(vd,cell_k,trialIdx);
-                    
-            end
-        end
+        
         function total_call_length = get_total_call_length(vd,cData,cell_k,call_offset)
             [idx, callTrain] = callDataIdx(vd,cData,cell_k);
             used_call_length = cData.callLength(idx);
@@ -1213,52 +1217,15 @@ classdef vocalData < ephysData
         end
         function [total_session_length, sessionBounds] = get_total_session_length(vd,cell_k)
             
-            switch vd.expType
-                case 'juvenile'
-                    b = strcmp(vd.batNums,vd.batNum{cell_k});
-                    expDate = vd.cellInfo{cell_k}(1:strfind(vd.cellInfo{cell_k},vd.tetrodeStr)-1);
-                    nlx_dir = [vd.baseDirs{b} 'bat' vd.batNum{cell_k} filesep 'neurologger_recording' expDate '\nlxformat\'];
-                    events = load([nlx_dir 'EVENTS.mat']);
-                    session_strings = {'start_communication','end_communication'};
-                    alternate_session_strings = {'end_playback','Stopped recording'};
-                case 'adult'
-                    baseDir = 'E:\ephys\adult_recording\event_file_data\';
-                    events = load(fullfile(baseDir,['14620_' datestr(vd.expDay(cell_k),'yyyymmdd') '_EVENTS.mat']));
-                    session_strings = {'start_communication','stop_communication'};
-                    alternate_session_strings = {'stop_playback','Stopped recording'};
-            end
             [stabilityBounds, ~, audio2nlg] = getCellInfo(vd,cell_k,'stabilityBounds');
-            stabilityBounds = 1e-3*stabilityBounds;
+            shared_nlg_pulse_times = audio2nlg.shared_nlg_pulse_times - audio2nlg.first_nlg_pulse_time;
             
-            sessionTime = zeros(1,length(session_strings));
-            sessionBounds = zeros(1,length(session_strings));
-            for s = 1:length(session_strings)
-                sessionIdx = cellfun(@(x) contains(x,session_strings{s}),events.event_types_and_details);
-                if ~sum(sessionIdx)
-                    sessionIdx = cellfun(@(x) contains(x,alternate_session_strings{s}),events.event_types_and_details);
-                end
-                
-                if sum(sessionIdx) > 1
-                    sessionIdx = find(sessionIdx);
-                    sessionIdx = sessionIdx(1);
-                end
-                
-                if (s == 2 && ~sum(sessionIdx) )
-                    sessionIdx = length(events.event_timestamps_usec)-1;
-                end
-                sessionTime(s) = 1e-3*(1e-3*events.event_timestamps_usec(sessionIdx) - audio2nlg.first_nlg_pulse_time);
-                
-                if s == 1
-                    
-                    sessionBounds(s) = max(sessionTime(s),stabilityBounds(s));
-                    
-                elseif s == 2
-                    
-                    sessionBounds(s) = min(sessionTime(s),stabilityBounds(s));
-                    
-                end
-            end
+            stabilityBounds = 1e-3*stabilityBounds;
+            sessionBounds = 1e-3*shared_nlg_pulse_times([1 end]);
+            
+            sessionBounds = [max(stabilityBounds(1),sessionBounds(1)) min(stabilityBounds(2),sessionBounds(2))];
             total_session_length = abs(diff(sessionBounds));
+            
         end
         function [fr_to_session_calls,percent_high_fr_calls,percent_session_calls,cell_ks] = get_fr_to_session_call_ratio_manual(vd,cData,b)
             high_fr_call_info_fnames = dir([vd.baseDirs{b} 'bat' vd.batNums{b} '\**\call_info*high_fr*.mat']);
@@ -1311,17 +1278,21 @@ classdef vocalData < ephysData
             timestamps = getSpikes(vd,cell_k);
             
             baselineMultiplier = 0;
-            min_peak_separation_ms = 2e3;
+            min_peak_separation_s = 2;
             nPeaks = 100;
+            fr_dT = 0.5;
+            fs = 1/fr_dT;
+            bw = 2;
+            
             [~, sessionBounds] = get_total_session_length(vd,cell_k);
-            timestamps = inRange(timestamps,1e3*sessionBounds);
+            timestamps = 1e-3*inRange(timestamps,1e3*sessionBounds);
+            t = min(timestamps):fr_dT:max(timestamps);
             
-            [fr,t] = sskernel(1e-6*timestamps,linspace(0,max(1e-6*timestamps),1e6),linspace(5e-4,1e-1,50));
-            fr = fr/1e3;
-            t = t*1e6;
-            fs = 1/median(diff(t));
+            f = gaussFilter(-min_peak_separation_s:fr_dT:min_peak_separation_s,bw);
+            binned_spikes = histcounts(timestamps,[t t(end)+1])/fr_dT;
+            fr = conv(binned_spikes,f,'same');
             
-            [pks, locs] = findpeaks(fr,'MinPeakHeight',vd.avgBaseline(cell_k) + baselineMultiplier*vd.devBaseline(cell_k),'MinPeakDistance',min_peak_separation_ms*fs);
+            [pks, locs] = findpeaks(fr,'MinPeakHeight',vd.avgBaseline(cell_k) + baselineMultiplier*vd.devBaseline(cell_k),'MinPeakDistance',min_peak_separation_s*fs);
             if length(pks)<nPeaks
                 event_pos_data = [];
                 return
@@ -1330,23 +1301,34 @@ classdef vocalData < ephysData
             topIdx = ismember(locs,locs(idx(end-nPeaks:end)));
             locs = locs(topIdx);
             
-            fs = 250e3;
-            
-            if strcmp(vd.expTyp,'juvenile')
-                    ttStr = 'TT';
-                    b = strcmp(vd.batNums,vd.batNum{cell_k});
-                    audio_dir = fullfile(vd.baseDirs{b},['bat' vd.batNum{cell_k}],['neurologger_recording' vd.cellInfo{cell_k}(1:strfind(vd.cellInfo{cell_k},ttStr)-1)],'audio','ch1');
+            b = strcmp(vd.batNums,vd.batNum{cell_k});
+            if strcmp(vd.expType,'juvenile')
+                ttStr = 'TT';
+                audio_dir = fullfile(vd.baseDirs{b},['bat' vd.batNum{cell_k}],['neurologger_recording' vd.cellInfo{cell_k}(1:strfind(vd.cellInfo{cell_k},ttStr)-1)],'audio','ch1');
             elseif any(strcmp(vd.expType,{'adult','adult_operant'}))
-                    baseDir = unique(vd.baseDirs);
-                    audio_dir = fullfile(baseDir{1},datestr(vd.expDay(cell_k),'mmddyyyy'),'audio','communication','ch1');
+                baseDir = fullfile('Y:\users\maimon\', [vd.expType '_recording\']);
+                switch vd.callType
+                    case 'call'
+                        audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'audio','communication','ch1');
+                    case 'operant'
+                        audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'operant',['box' vd.boxNums{b}]);
+                end
             end
-            high_activity_t = t(locs);
+            high_activity_t = 1e3*t(locs);
             event_pos_data = struct('file_event_pos',[],'cut',[],'corrected_eventpos',[],'f_num',[],'fName',[],'fs',[],'noise',[],'expDay',[]);
+            
+            if strcmp(vd.callType,'operant')
+                fs = 192e3;
+            else
+                fs = 250e3;
+            end
+            
+            [~, ~, audio2nlg] = getCellInfo(vd,cell_k);
+            nlg_offset = audio2nlg.first_nlg_pulse_time - audio2nlg.shared_nlg_pulse_times(1);
             
             for t_k = 1:length(high_activity_t)
                 nlg_time = high_activity_t(t_k);
-                [~, ~, audio2nlg] = getCellInfo(vd,cell_k);
-                [fName, f_num, file_event_pos] = get_avi_time_from_nlg(audio2nlg,audio_dir,nlg_time);
+                [fName, f_num, file_event_pos] = get_avi_time_from_nlg(audio2nlg,audio_dir,nlg_time + nlg_offset,vd.callType);
                 
                 if ~isempty(fName)
                     
@@ -1362,6 +1344,26 @@ classdef vocalData < ephysData
             end
             
         end
+        
+        function r = trial_fr_consistency(vd,cell_ks)
+            r = nan(1,length(cell_ks));
+            k = 1;
+            for cell_k = cell_ks
+                trialFR = vd.trialFR(cell_k);
+                used_calls = find(vd.usedCalls{cell_k});
+                nTrial = length(used_calls);
+                trainIdx = 1:2:nTrial;
+                testIdx = setdiff(1:nTrial,trainIdx);
+                
+                trainFR = mean(trialFR(used_calls(trainIdx),:));
+                testFR = mean(trialFR(used_calls(testIdx),:));
+                
+                rMat = corrcoef(trainFR,testFR);
+                r(k) = rMat(2);
+                k = k + 1;
+            end
+        end
+        
         function timestamps = getSpikes(vd,cell_k)
             
             [stabilityBounds, ~, audio2nlg, ttDir, spikeDir] = getCellInfo(vd,cell_k,'stabilityBounds');
@@ -1421,98 +1423,12 @@ classdef vocalData < ephysData
             end
             
         end
+        
         function responsiveCells = get.responsiveCells(obj)
             responsiveCells = find(~isnan(obj.latency));
         end
-        function oldestAge = get.oldestAge(obj)
-            oldestAge = max(obj.daysOld);
-        end
-        function youngestAge = get.youngestAge(obj)
-            youngestAge = min(obj.daysOld);
-        end
-        function ageBins = get.ageBins(obj)
-            ageBins = linspace(obj.youngestAge,obj.oldestAge+1,obj.n_age_bins);
-        end
-        function weeks_old_bins = get.weeks_old_bins(obj)
-            weeks_old_bins = obj.ageBins(1:end-1)/7;
-        end
-        function avgLatency = get.avgLatency(obj)
-            avgLatency = zeros(1,length(obj.ageBins)-1);
-            for w = 1:length(obj.ageBins)-1
-                [~,idx] = inRange(obj.daysOld,[obj.ageBins(w),obj.ageBins(w+1)]);
-                latency_in_bin = obj.latency(idx);
-                avgLatency(w) = nanmean(latency_in_bin);
-            end
-        end
-        function stdLatency = get.stdLatency(obj)
-            stdLatency = zeros(1,length(obj.ageBins)-1);
-            for w = 1:length(obj.ageBins)-1
-                [~,idx] = inRange(obj.daysOld,[obj.ageBins(w),obj.ageBins(w+1)]);
-                latency_in_bin = obj.latency(idx);
-                %                stdLatency(w) = nanstd(bootstrp(obj.nBoot,@nanmean,latency_in_bin));
-                stdLatency(w) = nanstd(latency_in_bin);
-            end
-        end
-        function bsStdLatencyCI = get.bsStdLatencyCI(obj)
-            bsStdLatencyCI = zeros(2,length(obj.ageBins)-1);
-            for w = 1:length(obj.ageBins)-1
-                [~,idx] = inRange(obj.daysOld,[obj.ageBins(w),obj.ageBins(w+1)]);
-                latency_in_bin = obj.latency(idx);
-                bsStdLatency = bootstrp(obj.nBoot,@nanstd,latency_in_bin);
-                bsStdLatencyCI(1,w) = 2*obj.stdLatency(w) - quantile(bsStdLatency,0.975);
-                bsStdLatencyCI(2,w) = 2*obj.stdLatency(w) - quantile(bsStdLatency,0.025);
-            end
-            
-        end
-        function vd = set_manual_responsive(vd)
-            
-            try
-                s = load([vd.analysisDir 'manual_responsive_cell_correction_' vd.callType '.mat']);
-                [e1{1:length(s.manualCorrectFN)}] = deal('falseNegative');
-                [e2{1:length(s.manualCorrectFP)}] = deal('falsePositive');
-                manualCorrect_cellInfo = [s.manualCorrectFN s.manualCorrectFP];
-                manualCorrect_batNum = [s.manualCorrectFN_batnum s.manualCorrectFP_batnum];
-                errorTypes = [e2 e1];
-                cell_k = cell(1,length(errorTypes));
-                for c = 1:length(errorTypes)
-                    errorType = errorTypes{c};
-                    mc_cellInfo = manualCorrect_cellInfo{c};
-                    mc_batNum = manualCorrect_batNum{c};
-                    cell_k{c} = find(strcmp(vd.cellInfo,mc_cellInfo) & strcmp(vd.batNum,mc_batNum));
-                    vd = setResponsive(vd,errorType,cell_k{c});
-                end
-            catch
-                display('couldn not find manual correction data')
-                for c = vd.responsiveCells
-                    
-                end
-            end
-            
-            
-            manual_correct = struct('cell_k',cell_k,'errorType',errorTypes,'latency',num2cell([nan(1,length(s.manualCorrectFP)) vd.latency([cell_k{:}])]));
-            save([vd.analysisDir 'manual_correct_' vd.callType '.mat'],'manual_correct');
-            vd = load_manual_responsive(vd,'load');
-            
-            
-        end
-        function vd = load_manual_responsive(vd,loadFlag)
-            
-            switch loadFlag
-                case 'unload'
-                    vd.manualCorrect = 0;
-                    vd.manual_correct_info = [];
-                    vd = updateLatency(vd);
-                case 'load'
-                    if strcmp(vd.callType,'call')
-                        s = load([vd.analysisDir 'manual_correct_call.mat']);
-                    else
-                        s = load([vd.analysisDir 'manual_correct_echo.mat']);
-                    end
-                    vd.manualCorrect = 1;
-                    vd.manual_correct_info = s.manual_correct;
-                    vd = updateManual(vd);
-            end
-            
+        function responsiveIdx = get.responsiveIdx(obj)
+            responsiveIdx = ~isnan(obj.latency);
         end
         function responsive_cells_by_bat = get.responsive_cells_by_bat(obj)
             responsive_cells_by_bat = cell(1,length(obj.batNums));
@@ -1520,9 +1436,16 @@ classdef vocalData < ephysData
                 responsive_cells_by_bat{n} = intersect(find(strcmp(obj.batNums{n},obj.batNum)),obj.responsiveCells);
             end
         end
-        function lm = fitLatencyAgeLM(obj)
-            lm = fitlm(obj.daysOld(obj.responsiveCells),obj.latency(obj.responsiveCells));
+        function time = get.time(obj)
+            time = obj.callRange(1):obj.dT:obj.callRange(2);
         end
+        function nCells = get.nCells(obj)
+           nCells = length(obj.cellInfo); 
+        end
+        function cellTable = get.cellTable(obj)
+            cellTable = table(obj.cellInfo',obj.batNum','VariableNames',{'cellInfo','batNum'});
+        end
+        
         function vd = update_usedCalls_by_callData(vd,cData,selecFun)
             
             for cell_k = find(vd.usable)
@@ -1601,6 +1524,74 @@ classdef vocalData < ephysData
             end
             
         end
+        function vd = join(vd1,vd2)
+            idx = compare_vd_properties(vd1,vd2);
+            assert(all(idx));
+            
+            vd = vd1;
+            propertyNames = properties(vd1);
+            
+            metaVD = metaclass(vd);
+            dependentIdx = arrayfun(@(x) x.HasDefault || x.Dependent || strcmp(x.SetAccess,'private'),metaVD.PropertyList);
+            propertyNames = propertyNames(~dependentIdx);
+            
+            superclass_property_names = arrayfun(@(prop) prop.Name,metaVD.SuperclassList.PropertyList,'un',0);
+            propertyNames = propertyNames(~ismember(propertyNames,superclass_property_names));
+            
+            propertyLength = cellfun(@(x) length(vd1.(x)),propertyNames);
+            propertyNames  = propertyNames(propertyLength == vd1.nCells);
+            
+            n_prop_to_join = length(propertyNames);
+            for prop_k = 1:n_prop_to_join
+                pName = propertyNames{prop_k};
+                sz = size(vd1.(pName));
+                joinDim = find(sz == vd1.nCells);
+                vd.(pName) = cat(joinDim,vd.(pName),vd2.(pName));
+            end           
+            
+            nBat = length(vd1.batNums);
+            superclass_property_length = cellfun(@(x) length(vd1.(x)),superclass_property_names);
+            str_property_idx = arrayfun(@(prop) ischar(vd1.(prop.Name)),metaVD.SuperclassList.PropertyList);
+            bat_superclass_property_idx = superclass_property_length == nBat & ~str_property_idx;
+            
+            propIdx = find(bat_superclass_property_idx);
+            for prop_k = 1:length(propIdx)
+                pName = superclass_property_names{propIdx(prop_k)};
+                sz = size(vd1.(pName));
+                joinDim = find(sz == nBat);
+                vd.(pName) = cat(joinDim,vd.(pName),vd2.(pName));
+            end
+            
+            propIdx = find(~bat_superclass_property_idx);
+            for prop_k = 1:length(propIdx)
+                pName = superclass_property_names{propIdx(prop_k)};
+                if ~all(size(vd1.(pName)) == size(vd2.(pName))) || ~isequal(vd1.(pName),vd2.(pName))
+                   vd.(pName) = []; 
+                end
+            end
+           
+
+        end
+        function [cellTable,idx1,idx2] = cellIntersect(vd1,vd2)
+            vdList = [vd1 vd2];
+            usableIdx = cell(1,2);
+            for vd_k = 1:2
+                usableIdx{vd_k} = find(vdList(vd_k).usable);
+            end
+            [cellTable,idx1,idx2] = intersect(vd1.cellTable(vd1.usable,:),vd2.cellTable(vd2.usable,:));
+            idx1 = usableIdx{1}(idx1);
+            idx2 = usableIdx{2}(idx2);
+        end
+        function shared_resp_cell_table = shared_responsive_cells(vd1,vd2)
+            shared_resp_cell_table = cell(1,2);
+            [shared_cell_table,idx1,idx2] = cellIntersect(vd1,vd2);
+            vdList = [vd1 vd2];
+            idxList = {idx1, idx2};
+            for vd_k = 1:2
+                shared_resp_cell_table{vd_k} = shared_cell_table(vdList(vd_k).responsiveIdx(idxList{vd_k}),:);
+            end
+        end
+        
         function export_all_call_spike_data(vd,output_dir)
             lastProgress = 0;
             usedCells = false(1,vd.nCells);
@@ -1651,6 +1642,20 @@ if any(strcmp(vd.expType,{'adult','adult_operant'}))
     call_data_dir = fullfile(baseDir,'call_data');
     exp_date_str = cellInfo(1:8);
     
+    try
+        if any(strcmp(vd.callType,{'call','echo'}))
+            audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat'])); % load fit data to sync audio to nlg data
+        elseif strcmp(vd.callType,'operant')
+            s = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat']),'first_nlg_pulse_time','first_audio_pulse_time');
+            audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit_operant_box_'  vd.boxNums{b} '.mat'])); % load fit data to sync audio to nlg data
+            audio2nlg.first_nlg_pulse_time = s.first_nlg_pulse_time;
+            audio2nlg.first_audio_pulse_time = s.first_audio_pulse_time;
+        end
+    catch
+        [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
+        return
+    end
+    
     if any(strcmp(varargin,'stabilityBounds')) && strcmp(vd.cellType,'singleUnit')
         s = load(fullfile(vd.analysisDir,'cell_stability_info.mat'));
         cell_stability_info = s.cell_stability_info;
@@ -1668,7 +1673,7 @@ if any(strcmp(vd.expType,{'adult','adult_operant'}))
                 cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data.mat']);
             elseif strcmp(vd.callType,'operant')
                 cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data_operant_box_' vd.boxNums{b} '.mat']);
-                if strcmp(vd.operant_reward_status,'rewardedOnly')
+                if any(strcmp(vd.operant_reward_status,{'rewardedOnly','notRewarded'}))
                     operant_reward_delay = 5e3;
                     operantEvents = get_operant_events(vd,cell_k);
                 end
@@ -1708,19 +1713,23 @@ if any(strcmp(vd.expType,{'adult','adult_operant'}))
                 used_call_idx = used_call_idx(~neighboring_call_idx);
             end
             
-            if strcmp(vd.callType,'operant') && strcmp(vd.operant_reward_status,'rewardedOnly')
+            if strcmp(vd.callType,'operant') && any(strcmp(vd.operant_reward_status,{'rewardedOnly','notRewarded'}))
                 if ~isempty(operantEvents)
                     rewarded_event_idx = operantEvents.food_port_status.FoodPortBack | operantEvents.food_port_status.FoodPortFront;
                     rewarded_event_times = operantEvents.eventTimes(rewarded_event_idx);
                     used_call_pos = vertcat(cut_call_data(used_call_idx).corrected_callpos);
                     
                     nCall = length(used_call_idx);
-                    dT_call = inf(1,nCall);
+                    dT_call = nan(1,nCall);
                     
                     for call_k = 1:nCall
                         dT_call(call_k) = min(abs(used_call_pos(call_k,1) - rewarded_event_times));
                     end
-                    used_call_idx = used_call_idx(dT_call < operant_reward_delay);
+                    if strcmp(vd.operant_reward_status,'rewardedOnly')
+                        used_call_idx = used_call_idx(dT_call < operant_reward_delay);
+                    elseif strcmp(vd.operant_reward_status,'notRewarded')
+                        used_call_idx = used_call_idx(dT_call > operant_reward_delay);
+                    end
                 else
                     used_call_idx = [];
                 end
@@ -1737,12 +1746,28 @@ if any(strcmp(vd.expType,{'adult','adult_operant'}))
                 [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
                 return
             end
+        elseif strcmp(vd.callType,'operant_reward')
+            
+            operantEvents = get_operant_events(vd,cell_k);
+            
+            if ~isempty(operantEvents)
+                
+                rewarded_event_idx = (operantEvents.food_port_status.FoodPortBack | operantEvents.food_port_status.FoodPortFront) & ~isnan(operantEvents.delay2reward) &  ~isnan(operantEvents.eventTimes);
+                nReward = sum(rewarded_event_idx);
+                rewardTimes = operantEvents.eventTimes(rewarded_event_idx) + 1e3*operantEvents.delay2reward(rewarded_event_idx);
+                rewardTimes = repmat(rewardTimes,1,2);
+                cut_call_data = struct('corrected_callpos',mat2cell(rewardTimes,ones(1,nReward)),'uniqueID',num2cell(-nReward:-1)','batNum',repmat({batNum},nReward,1));
+                
+            else
+                cut_call_data = [];
+            end
+            
+            
         end
     else
         cut_call_data = [];
     end
     
-    audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat'])); % load fit data to sync audio to nlg data
     stabilityBounds = stabilityBounds - audio2nlg.first_nlg_pulse_time;
     success = true;
     
@@ -1901,6 +1926,7 @@ end
 
 [operantEvents.eventTimes,idx] = sort(operantEvents.eventTimes);
 operantEvents.food_port_status = operantEvents.food_port_status(idx,:);
+operantEvents.delay2reward = operantEvents.delay2reward(idx,:);
 
 end
 
@@ -2046,6 +2072,7 @@ if isempty(allSpikes)
     return
 end
 allSpikes = [allSpikes{:}];
+allSpikes = inRange(allSpikes,vd.baselineRange);
 nTrial = sum(vd.usedCalls{cell_k});
 
 switch vd.cellType
@@ -2058,13 +2085,13 @@ switch vd.cellType
             case 'ratio_and_distance'
                 wellSorted = vd.LRatio(cell_k) <= vd.sortingThreshold(1) & vd.isolationDistance(cell_k) >= vd.sortingThreshold(2);
         end
-        usable = (length(allSpikes)/sum(vd.usedCalls{cell_k})) >= vd.minSpikes &&...
+        usable = (length(allSpikes)/sum(vd.usedCalls{cell_k}))/range(vd.baselineRange) >= vd.minSpikes &&...
             nTrial >= vd.minCalls &&...
             wellSorted;
         
     case 'multiUnit'
         
-         usable = (length(allSpikes)/sum(vd.usedCalls{cell_k})) >= vd.minSpikes && nTrial >= vd.minCalls;
+         usable = (length(allSpikes)/sum(vd.usedCalls{cell_k}))/range(vd.baselineRange) >= vd.minSpikes && nTrial >= vd.minCalls;
         
 end
 
@@ -2207,8 +2234,42 @@ elseif strcmp(vd.latencyType,'trialBased')
     [respType, respValency, respStrength, latency]  = trialBasedResponsive(vd,cell_k);
 elseif strcmp(vd.latencyType,'std_above_baseline')
     [respType, respValency, respStrength, latency]  = std_above_baseline_responsive(vd,cell_k);
-    
+elseif strcmp(vd.latencyType,'sliding_win_test')
+    [respType, respValency, respStrength, latency]  = sliding_win_test_responsive(vd,cell_k);
 end
+
+
+end
+
+function [respType, respValency, respStrength, latency]  = sliding_win_test_responsive(vd,cell_k)
+
+[respType, respValency, respStrength, latency] = deal(NaN);
+[latency_time,time_idx] = inRange(vd.time,vd.latencyRange);
+nT = sum(time_idx);
+win_size_s = 0.25;
+winSize = win_size_s/vd.dT;
+slidingWinIdx = slidingWin(nT,winSize,winSize-1);
+
+baselineLength = diff(vd.baselineRange);
+baseSpikes = cellfun(@(spikes) length(inRange(spikes,vd.baselineRange))/baselineLength,vd.callSpikes{cell_k}(vd.usedCalls{cell_k}));
+baseFR = mean(baseSpikes);
+
+trialSpikes = full(vd.trial_spike_train{cell_k}(vd.usedCalls{cell_k},time_idx));
+avgFR = sum(trialSpikes)/size(trialSpikes,1)/vd.dT;
+slidingFR = avgFR(slidingWinIdx);
+
+[~,p] = ttest(slidingFR', baseFR);
+
+h = p < vd.responsiveAlpha/size(slidingWinIdx,1);
+
+if any(h)
+    [latency,respType] = get_thresh_crossing(vd,h,latency_time);
+    if ~isnan(latency)
+        respStrength = median(avgFR(h)) - vd.avgBaseline(cell_k);
+        respValency = sign(respStrength);
+    end
+end
+
 
 
 end
@@ -2222,7 +2283,7 @@ end
 
 
 spikeTrain = sum(vd.trial_spike_train{cell_k}(usedCalls(trialIdx),:),1);
-idx = find(vd.time>=vd.cusumStart);
+idx = find(vd.time>=vd.cusumStart & vd.time<vd.latencyRange(2));
 muHat = mean(spikeTrain(vd.time<vd.cusumBaseline));
 SInc = zeros(1,length(idx)+1);
 SDec = zeros(1,length(idx)+1);
@@ -2322,7 +2383,7 @@ switch vd.latencyType
         postCallSpikes = cellfun(@(spikes) length(inRange(spikes,[0,vd.postCall]))/vd.postCall,vd.callSpikes{cell_k}(vd.usedCalls{cell_k}));
         responsivePre = ttest(baseSpikes,preCallSpikes,'Alpha',vd.responsiveAlpha);
         responsivePost = ttest(baseSpikes,postCallSpikes,'Alpha',vd.responsiveAlpha);
-        responsive = responsivePre | responsivePost;
+        responsive = (~isnan(responsivePre) && ~isnan(responsivePost)) && (responsivePre || responsivePost);
         if responsive
             allSpikes = {preCallSpikes,postCallSpikes};
             responsivity = [responsivePre,responsivePost];
@@ -2445,7 +2506,6 @@ end
 
 [respType, respValency, respStrength, latency] = deal(NaN);
 [latency_time,time_idx] = inRange(vd.time,vd.latencyRange);
-
 trialFR = vd.trialFR(cell_k);
 
 fr = mean(trialFR(trialIdx,:));
@@ -2458,39 +2518,49 @@ latency_time_fr = fr(time_idx);
 over_thresh = latency_time_fr - frDev(time_idx) > thresh;
 
 if any(over_thresh)
-    thresh_crossing = find(diff(over_thresh) == 1) + 1;
-    crossing_length = zeros(1,length(thresh_crossing));
     
-    k = 1;
-    for tc = thresh_crossing
-        if ~isempty(find(diff(over_thresh(tc:end)) == -1,1))
-            crossing_length(k) = find(diff(over_thresh(tc:end)) == -1,1);
-        else
-            crossing_length(k) = length(time_idx) - tc;
-        end
-        k = k + 1;
-    end
-    
-    wins = [thresh_crossing' (thresh_crossing  + crossing_length)'];
-    merged_wins = merge_wins(wins,1/vd.dT,vd.min_responsive_length);
-    thresh_crossing = merged_wins(:,1)';
-    crossing_length = diff(merged_wins,[],2)';
-    
-    if any(crossing_length*vd.dT >= vd.min_responsive_length)
-        thresh_crossing_idx = thresh_crossing(find(crossing_length*vd.dT >= vd.min_responsive_length,1,'first'));
-        latency = latency_time(thresh_crossing_idx);
-        if latency < 0
-            respType = 'pre';
-        else
-            respType = 'post';
-        end
+    [latency,respType] = get_thresh_crossing(vd,over_thresh,latency_time);
+    if ~isnan(latency)
         respValency = 1;
         respStrength = median(latency_time_fr(over_thresh)) - vd.avgBaseline(cell_k);
     end
-    
 end
 
 
+
+end
+
+function [latency,respType] = get_thresh_crossing(vd,over_thresh,latency_time)
+
+thresh_crossing = find(diff(over_thresh) == 1) + 1;
+crossing_length = zeros(1,length(thresh_crossing));
+
+k = 1;
+for tc = thresh_crossing
+    if ~isempty(find(diff(over_thresh(tc:end)) == -1,1))
+        crossing_length(k) = find(diff(over_thresh(tc:end)) == -1,1);
+    else
+        crossing_length(k) = length(vd.time) - tc;
+    end
+    k = k + 1;
+end
+
+wins = [thresh_crossing' (thresh_crossing  + crossing_length)'];
+merged_wins = merge_wins(wins,1/vd.dT,vd.min_responsive_length);
+thresh_crossing = merged_wins(:,1)';
+crossing_length = diff(merged_wins,[],2)';
+
+if any(crossing_length*vd.dT >= vd.min_responsive_length)
+    thresh_crossing_idx = thresh_crossing(find(crossing_length*vd.dT >= vd.min_responsive_length,1,'first'));
+    latency = latency_time(thresh_crossing_idx);
+    if latency < 0
+        respType = 'pre';
+    else
+        respType = 'post';
+    end
+else
+    [latency,respType] = deal(NaN);
+end
 
 end
 
@@ -2566,55 +2636,6 @@ end
 
 end
 
-function vd = setResponsive(vd,errorType,cell_k)
-
-
-if isempty(cell_k)
-    display('couldn''t find specified cell')
-    keyboard
-    return
-end
-if strcmp(errorType,'falseNegative') && ~ismember(cell_k,vd.responsiveCells)
-    figure;
-    h = figure('units','normalized','outerposition',[0 0 1 1]);
-    subplot(2,1,1)
-    title([vd.batNum{cell_k} '--' vd.cellInfo{cell_k}]);
-    vd.plotRaster(cell_k)
-    subplot(2,1,2)
-    vd.plotFR(cell_k);
-    %     pause(0.00001);
-    %     frame_h = get(h,'JavaFrame');
-    %     set(frame_h,'Maximized',1);
-    %     drawnow;
-    [latencyManual,~] = ginput(1);
-    vd.latency(cell_k) = latencyManual;
-    cla;
-    vd.plotFR(cell_k);
-    pause;
-    close(h);
-elseif strcmp(errorType,'falsePositive') && ismember(cell_k,vd.responsiveCells)
-    vd.latency(cell_k) = nan;
-else
-    display('error type and response profile mismatch')
-    keyboard;
-end
-end
-
-function vd = updateManual(vd)
-for c = 1:length(vd.manual_correct_info)
-    if ~isfield(vd.manual_correct_info,'cellInfo') && isfield(vd.manual_correct_info,'cell_k')
-        cell_k = vd.manual_correct_info(c).cell_k;
-    elseif isfield(vd.manual_correct_info,'cellInfo') && isfield(vd.manual_correct_info,'batNum')
-        cell_k = find(strcmp(vd.cellInfo,vd.manual_correct_info(c).cellInfo) & strcmp(vd.batNum,vd.manual_correct_info(c).batNum));
-    else
-        display('couldn''t find appropriate manual correct info file');
-        return
-    end
-    vd.latency(cell_k) = vd.manual_correct_info(c).latency;
-end
-vd.latency(vd.misclassified==1) = NaN;
-end
-
 function vd = updateLatency(vd)
 vd.latency = nan(1,vd.nCells);
 vd.respType = num2cell(nan(1,vd.nCells));
@@ -2623,9 +2644,6 @@ for cell_k = 1:vd.nCells
     if vd.usable(cell_k)
         [vd.latency(cell_k), vd.respType{cell_k}, vd.respValency(cell_k), vd.respStrength(cell_k)] = calculateLatency(vd,cell_k);
     end
-end
-if vd.manualCorrect
-    vd = updateManual(vd);
 end
 end
 

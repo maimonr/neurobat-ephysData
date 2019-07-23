@@ -10,7 +10,7 @@ classdef ephysData
         spike_data_dir
         lfp_data_dir
         expType
-        callType = 'call'
+        callType
     end
     
     methods
