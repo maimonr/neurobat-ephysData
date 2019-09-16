@@ -65,7 +65,7 @@ classdef bout_call_data < ephysData
             bc.expType = vdCall.expType;
             bc.callType = vdCall.callType;
             
-            if strcmp(bc.expType,'adult_operant') && strcmp(bc.callType,'operant')
+            if strcmp(bc.expType{1},'adult_operant') && strcmp(bc.callType{1},'operant')
                 [b,a] = butter(4,200/(bc.fs/2),'high');
                 bc.raw_data_filter = struct('b',b,'a',a);
             end
@@ -83,7 +83,7 @@ classdef bout_call_data < ephysData
             
             for b = 1:nBat
                 batNum = bc.batNums(b);
-                if any(isnan(cData('batNum',batNum).daysOld))
+                if any(isnan(cData('batNum',batNum).daysOld) | cData('batNum',batNum).daysOld==0)
                     expDays{b} = cData('batNum',batNum).expDay;
                     daysOffset = (24*60*60)*days(expDays{b} - expDays{b}(1));
                 else
@@ -135,7 +135,7 @@ classdef bout_call_data < ephysData
                 expDays{b} = expDays{b}(~cellfun(@isempty,boutCalls{b}));
                 boutCalls{b} = boutCalls{b}(~cellfun(@isempty,boutCalls{b}));
             end
-            bc.expDays = vertcat(expDays{:});
+            bc.expDay = vertcat(expDays{:});
             bc.rSpec = vertcat(rhythmSpec{:});
             bc.boutCalls = horzcat(boutCalls{:})';
             bc.boutEnv = vertcat(features{:});
