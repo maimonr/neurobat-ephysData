@@ -225,10 +225,17 @@ classdef bout_call_data < ephysData
                                     return
                                 end
                             else
-                                varargout = {bc.(S(2).subs)(boutIdx,:)};
+                                if size(bc.(S(2).subs),1) == length(boutIdx)
+                                    varargout = {bc.(S(2).subs)(boutIdx,:)};
+                                elseif size(bc.(S(2).subs),2) == length(boutIdx)
+                                    varargout = {bc.(S(2).subs)(:,boutIdx)};
+                                else
+                                    disp('Indexing mismatch');
+                                    return
+                                end
                             end
                         else
-                            display('Indexing in VocalData must come in pairs');
+                            disp('Indexing in VocalData must come in pairs');
                             return
                         end
                     otherwise

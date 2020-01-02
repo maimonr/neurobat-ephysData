@@ -52,6 +52,7 @@ classdef vocalData < ephysData
         expDay
         callSpikes
         callNum
+        call_bat_num
         callLength
         trial_spike_train
         stored_trial_fr
@@ -141,7 +142,7 @@ classdef vocalData < ephysData
                     vd.daysOld, vd.latency, vd.respType, vd.tetrodeNum, vd.tetrodeDepth]  = deal(nan(1,nCells_to_process));
                 [vd.batNum, vd.cellInfo, vd.callSpikes, vd.callNum, vd.frBandwidth,...
                     vd.callLength, vd.stored_trial_fr, vd.avgFR, vd.devFR,...
-                    vd.trial_spike_train, vd.usedCalls] = deal(cell(1,nCells_to_process));
+                    vd.trial_spike_train, vd.usedCalls, vd.call_bat_num] = deal(cell(1,nCells_to_process));
                 vd.respType = num2cell(vd.respType);
                 vd.usable = false(1,nCells_to_process);
                 vd.avg_spike = nan(nCells_to_process,vd.waveformSamples);
@@ -212,7 +213,7 @@ classdef vocalData < ephysData
                         
                         timestamps = getSpikes(vd,cell_k);
                         
-                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
+                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
                             get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         vd.daysOld(cell_k) = days(vd.expDay(cell_k) - vd.birthDates{b});
@@ -277,7 +278,7 @@ classdef vocalData < ephysData
                             timestamps = timestamps';
                         end
                         
-                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
+                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
                             get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         vd.sortingQuality(cell_k) = vd.sortingThreshold;
@@ -347,7 +348,7 @@ classdef vocalData < ephysData
                         [stabilityBounds, cut_call_data, ~, ttDir] = getCellInfo(vd,cell_k,'stabilityBounds','cut_call_data');
                         timestamps = getSpikes(vd,cell_k);
                         
-                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.callLength{cell_k}, vd.usedCalls{cell_k}] = ...
+                        [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k}, vd.usedCalls{cell_k}] = ...
                             get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         [vd.meanFR(cell_k), vd.medianISI(cell_k), vd.peak2trough(cell_k),...
@@ -421,6 +422,8 @@ classdef vocalData < ephysData
                                         cellIdx = cellIdx & vd.tetrodeNum==S(1).subs{idx+1};
                                     case 'usable'
                                         cellIdx = cellIdx & vd.usable==S(1).subs{idx+1};
+                                    case 'cellTable'
+                                        cellIdx = cellIdx & ismember(vd.cellTable,S(1).subs{idx+1})';
                                     otherwise
                                         disp('indexing variable not recognized')
                                         return
@@ -622,19 +625,17 @@ classdef vocalData < ephysData
                 if numel(varargin{1}) > 1
                     order = varargin{1};
                 else
-                    resp_trials = get_responsive_trials(vd,cell_k,vd.responsive_nStd_over_baseline,vd.latencyRange);
+                    resp_trials = get_responsive_trials(vd,cell_k);
                     used_calls = find(vd.usedCalls{cell_k});
-                    order = 1:length(used_calls);
-                    order(resp_trials) = 1:sum(resp_trials);
-                    order(~resp_trials) = sum(resp_trials)+1:length(used_calls);
+                    order = [used_calls(resp_trials) used_calls(~resp_trials)];
                     responsive_order = true;
                 end
                 
             else
-                order = 1:sum(vd.usedCalls{cell_k});
+                order = find(vd.usedCalls{cell_k});
             end
             
-            spike_train = vd.trial_spike_train{cell_k}(vd.usedCalls{cell_k},:);
+            spike_train = vd.trial_spike_train{cell_k};
             spike_train = spike_train(order,:);
             [row,col] = find(spike_train);
             scatter(vd.time(col),row,12,'k','filled')
@@ -882,7 +883,7 @@ classdef vocalData < ephysData
             callFR = cell(3,length(cell_ks));
             k = 1;
             for cell_k = cell_ks
-                idx = ismember(cData.callID, vd.callNum{cell_k}) & strcmp(cData.batNum,vd.batNum(cell_k)) & cData.expDay == vd.expDay(cell_k);
+                idx = ismember(cData.callID, vd.callNum{cell_k}) & cData.expDay == vd.expDay(cell_k);
                 callPos = cData.callPos(idx,:);
                 pre_interCallinterval = [Inf; (callPos(2:end,1) - callPos(1:end-1,2))]; % list of how far current call is from last call
                 post_interCallinterval = abs([(callPos(1:end-1,2) - callPos(2:end,1)); Inf]); % list of how far current call is from last call
@@ -909,7 +910,7 @@ classdef vocalData < ephysData
             nonBoutCalls = callFR(3,:);
             
         end
-        function [low_FR, high_FR] = FR_by_audio_feature(vd,cData,varName,thresh,cell_ks,timeWin)
+        function [low_FR, high_FR, low_idx, high_idx] = FR_by_audio_feature(vd,cData,varName,thresh,cell_ks,timeWin)
             
             if nargin < 5
                 cell_ks = vd.responsiveCells;
@@ -928,8 +929,9 @@ classdef vocalData < ephysData
                 cell_k = cell_ks(k);
                 nTrial = length(vd.callSpikes{cell_k});
                 idx = ismember(cData.callID, vd.callNum{cell_k}) & cData.expDay == vd.expDay(cell_k);
-                low_idx = find(cData.(varName)(idx)<thresh);
-                high_idx = find(cData.(varName)(idx)>=thresh);
+                ICI = [Inf; diff(cData.callPos(:,1))];
+                low_idx = find(cData.(varName)(idx)<thresh & ICI(idx) > range(timeWin));
+                high_idx = find(cData.(varName)(idx)>=thresh & ICI(idx) > range(timeWin));
                 if length(low_idx) >= min_used_calls && length(high_idx) >= min_used_calls
                     trialSpikes = vd.callSpikes{cell_k};
                     cLength = vd.callLength{cell_k};
@@ -1053,50 +1055,84 @@ classdef vocalData < ephysData
             resp_callIDs = callIDs(resp_trials);
             non_resp_callIDs = callIDs(~resp_trials);
         end
-        function [bat_fr_latency, used_call_idx, cell_ks] = individual_bat_resp(vd,cData,varargin)
+        function [bat_fr_latency, used_call_idx, cell_ks, manual_selected_cells] = individual_bat_resp(vd,cData,varargin)
             
-            pnames = {'cell_ks','respType','minCalls','ICI_limit','plotFlag','timeLims'};
-            dflts  = {vd.responsiveCells,vd.latencyType,vd.minCalls,abs(vd.spikeRange(1)),false,vd.spikeRange};
-            [cell_ks,resp_latency_type,minCall,ICI_limit,plotFlag,timeLims] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'cell_ks','respType','minCalls','ICI_limit','plotFlag','timeLims','target_bat_num'};
+            dflts  = {vd.responsiveCells,vd.latencyType,vd.minCalls,abs(vd.spikeRange(1)),false,vd.spikeRange,[]};
+            [cell_ks,resp_latency_type,minCall,ICI_limit,plotFlag,timeLims,target_bat_num] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
             [t,t_idx] = inRange(vd.time,timeLims);
             nCell = length(cell_ks);
             bat_fr_latency = cell(1,nCell);
             used_call_idx = cell(1,nCell);
+            manual_selected_cells = nan(1,nCell);
             colors = {'r','g','b','k'};
             k = 1;
+            
             for cell_k = cell_ks
+                if plotFlag
+                    cla
+                end
                 trialFR = vd.trialFR(cell_k);
                 callIDs = vd.callNum{cell_k}';
                 call_bat_nums = cData('callID',callIDs,'expDay',vd.expDay(cell_k)).batNum;
                 cPos = cData('callID',callIDs,'expDay',vd.expDay(cell_k)).callPos;
                 ICI = [Inf; cPos(2:end,1) - cPos(1:end-1,2)];
-                select_bat_nums = setdiff(unique(call_bat_nums(~cellfun(@iscell,call_bat_nums))),[vd.batNum(cell_k) 'unidentified'])';
-                n_select_bats = length(select_bat_nums);
-                h = cell(1,n_select_bats);
-                used_call_idx{k} = cell(1,n_select_bats );
-                bat_fr_latency{k} = cell(1,n_select_bats );
+                select_bat_nums_cat = categorical(setdiff(unique(call_bat_nums(~cellfun(@iscell,call_bat_nums))),[vd.batNum(cell_k) 'unidentified']))';
+                idx = ~cellfun(@iscell,call_bat_nums);
+                call_bat_nums_cat = cell(length(call_bat_nums),1);
+                call_bat_nums_cat(idx) = num2cell(categorical(call_bat_nums(idx)));
+                call_bat_nums_cat(~idx) = cellfun(@(x) categorical({x{:}}),call_bat_nums(~idx),'un',0);
+                
+                if ~isempty(target_bat_num) && ~iscell(target_bat_num)
+                    select_bat_nums_cat = {categorical({target_bat_num}),setdiff(select_bat_nums_cat,target_bat_num)};
+                elseif ~isempty(target_bat_num) && iscell(target_bat_num)
+                    select_bat_nums_cat = {categorical(target_bat_num(k)),setdiff(select_bat_nums_cat,target_bat_num{k})};
+                else
+                    select_bat_nums_cat = num2cell(select_bat_nums_cat);
+                end
+                n_select_bats = length(select_bat_nums_cat);
+                [bat_fr_latency{k}, used_call_idx{k}, h] = deal(cell(1,n_select_bats));
                 for bat_k = 1:n_select_bats 
-                    used_call_bat_idx = ICI > ICI_limit & strcmp(call_bat_nums,select_bat_nums(bat_k));
+                    used_call_bat_idx = ICI > ICI_limit & cellfun(@(bNum) any(ismember(bNum,select_bat_nums_cat{bat_k})),call_bat_nums_cat);
                     if sum(used_call_bat_idx)>minCall
                         bat_fr_latency{k}{bat_k} = calculateLatency(vd,cell_k,'latencyType',resp_latency_type,'trialIdx',used_call_bat_idx);
-                        if plotFlag
-                            batFR = trialFR(used_call_bat_idx,t_idx);
-                            [~,h{bat_k}] = boundedline(t,mean(batFR),std(batFR)/sqrt(sum(used_call_bat_idx)),colors{bat_k},'alpha');
-                            h{bat_k} = findobj(h{bat_k});
-                        end
                     end
                     used_call_idx{k}{bat_k} = used_call_bat_idx;
                 end
                 
-                if plotFlag
+                plot_cell_flag = (plotFlag > 0 && plotFlag < 3) || (plotFlag == 3 && any(~isnan([ bat_fr_latency{k}{:}])));
+                
+                if plot_cell_flag
+                    for bat_k = 1:n_select_bats
+                        batFR = trialFR(used_call_idx{k}{bat_k},t_idx);
+                        if sum(used_call_idx{k}{bat_k})>minCall
+                            [~,h{bat_k}] = boundedline(t,mean(batFR),std(batFR)/sqrt(sum(used_call_idx{k}{bat_k})),colors{bat_k},'alpha');
+                            h{bat_k} = findobj(h{bat_k});
+                        end
+                    end
+                end
+                
+                if plot_cell_flag
                     used_idx = cellfun(@sum,used_call_idx{k})>minCall;
                     if any(used_idx)
-                        legend_str = cellfun(@(bNum,nCall,lat) [bNum '-' num2str(sum(nCall)) '-' num2str(lat)],select_bat_nums(used_idx),used_call_idx{k}(used_idx),bat_fr_latency{k}(used_idx),'un',0);
-                        legend([h{used_idx}],legend_str{:})
+                        legend_str = cellfun(@(bNum,nCall,lat) cell2mat([strjoin(string(bNum)) '-' num2str(sum(nCall)) '-' num2str(lat)]),select_bat_nums_cat(used_idx),used_call_idx{k}(used_idx),bat_fr_latency{k}(used_idx),'un',0);
+                        legend([h{used_idx}],legend_str{:},'Location','northeastoutside')
                         title(sprintf('%s - cell %d',vd.batNum{cell_k},cell_k))
-                        input('?')
+                        axis square
+                        xlabel('Time (s)')
+                        ylabel('Firing rate (Hz)')
+                        set(gca,'FontSize',45);
+                        xlim(timeLims)
+                        legend box off
+                        box off
+                        if plotFlag ~= 2
+                            selectCell = input('?');
+                            if ~isempty(selectCell)
+                                manual_selected_cells(k) = selectCell;
+                            end
+                        end
                     end
-                    cla
                 end
                 
                 k = k + 1;
@@ -1446,30 +1482,69 @@ classdef vocalData < ephysData
             
         end
         
-        function r = trial_fr_consistency(vdList,cell_ks)
-            r = nan(1,length(cell_ks));
+        function [r,R] = trial_fr_consistency(vdList,cell_ks,varargin)
+            
+            pnames = {'timeLim','nBoot','minCall'};
+            dflts  = {vdList(1).spikeRange,1e3,vdList(1).minCalls};
+            [timeLims,nSubsample,minCall] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            [~,t_idx] = inRange(vdList(1).time,timeLims);
+            [r,R] = deal(nan(1,length(cell_ks)));
             k = 1;
             for cell_k = cell_ks
+                rSubsample = nan(1,nSubsample);
                 if length(vdList) == 1
                     trialFR = vdList.trialFR(cell_k);
-                    used_calls = find(vdList.usedCalls{cell_k});
-                    nTrial = length(used_calls);
-                    trainIdx = 1:2:nTrial;
-                    testIdx = setdiff(1:nTrial,trainIdx);
-                    
-                    trialFRs{1} = mean(trialFR(used_calls(trainIdx),:));
-                    trialFRs{2} = mean(trialFR(used_calls(testIdx),:));
-                    
-                elseif length(vdList) == 2
-                    trialFRs = cell(1,2);
-                    for vd_k = 1:2
-                        trialFR = vdList(vd_k).trialFR(cell_k);
-                        used_calls = vdList(vd_k).usedCalls{cell_k};
-                        trialFRs{vd_k} = mean(trialFR(used_calls,:));
+                    used_calls = vdList.usedCalls{cell_k};
+                    n_used_calls = sum(used_calls);
+                    if n_used_calls < minCall
+                        k = k + 1;
+                        continue
                     end
+                    trialFR = trialFR(used_calls,t_idx)';
+                    
+                    trainIdx = 1:2:minCall;
+                    testIdx = setdiff(1:minCall,trainIdx);
+                    
+                    for boot_k = 1:nSubsample
+                        callIdx = randperm(n_used_calls,minCall);
+                        sample_trial_fr = trialFR(:,callIdx);
+                        rSubsample(boot_k) = corr(mean(sample_trial_fr(:,trainIdx),2),mean(sample_trial_fr(:,testIdx),2));
+                    end
+                    
+                    pairwiseR = corr(trialFR);
+                    mask = tril(true(size(pairwiseR)),-1);
+                    pairwiseR = pairwiseR(mask);
+                   
+                elseif length(vdList) == 2
+                    [trialFRs,used_calls] = deal(cell(1,2));
+                    for vd_k = 1:2
+                        trialFR = vdList(vd_k).trialFR(cell_k{1}(vd_k));
+                        used_calls{vd_k} = vdList(vd_k).usedCalls{cell_k{1}(vd_k)};
+                        trialFRs{vd_k} = trialFR(used_calls{vd_k},t_idx)';
+                    end
+                    
+                    if any(cellfun(@sum,used_calls) < minCall)
+                        k = k + 1;
+                        continue
+                    end
+                    
+                    for boot_k = 1:nSubsample
+                        sample_trial_fr = cell(1,2);
+                        for vd_k = 1:2
+                            callIdx = randperm(sum(used_calls{vd_k}),minCall);
+                            sample_trial_fr{vd_k} = trialFRs{vd_k}(:,callIdx);
+                        end
+                        rSubsample(boot_k) = corr(mean(sample_trial_fr{1},2),mean(sample_trial_fr{2},2));
+                    end
+                    
+                    pairwiseR = corr(trialFRs{:});
+                    pairwiseR = pairwiseR(:);
+                    
                 end
-                rMat = corrcoef(trialFRs{:});
-                r(k) = rMat(2);
+
+                r(k) = nanmean(rSubsample);
+                R(k) = mean(pairwiseR(~isinf(pairwiseR) & ~isnan(pairwiseR)));
+                
                 k = k + 1;
             end
         end
@@ -1566,7 +1641,7 @@ classdef vocalData < ephysData
                     [stabilityBounds, cut_call_data] = getCellInfo(vd,cell_k,'stabilityBounds','cut_call_data');
                     callNums = vd.callNum{cell_k};
                     selectedCalls = selecFun(cData,callNums)';
-                    [~,~,~,usedCallNums] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,'selectedCalls',selectedCalls);
+                    [~,~,~,~,usedCallNums] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,'selectedCalls',selectedCalls);
                     vd.usedCalls{cell_k} = usedCallNums;
                 catch err
                     keyboard
@@ -1695,14 +1770,17 @@ classdef vocalData < ephysData
             idx1 = usableIdx{1}(idx1);
             idx2 = usableIdx{2}(idx2);
         end
-        function shared_resp_cell_table = shared_responsive_cells(vd1,vd2)
+        function [shared_resp_cell_table,idx1,idx2] = shared_responsive_cells(vd1,vd2)
             shared_resp_cell_table = cell(1,2);
             [shared_cell_table,idx1,idx2] = cellIntersect(vd1,vd2);
             vdList = [vd1 vd2];
             idxList = {idx1, idx2};
             for vd_k = 1:2
-                shared_resp_cell_table{vd_k} = shared_cell_table(vdList(vd_k).responsiveIdx(idxList{vd_k}),:);
+                resp_idx = vdList(vd_k).responsiveIdx(idxList{vd_k});
+                shared_resp_cell_table{vd_k} = shared_cell_table(resp_idx,:);
+                idxList{vd_k} = idxList{vd_k}(resp_idx);
             end
+            [idx1,idx2] = deal(idxList{:});
         end
         
         function export_all_call_spike_data(vd,output_dir)
@@ -2043,7 +2121,7 @@ operantEvents.delay2reward = operantEvents.delay2reward(idx,:);
 
 end
 
-function [callSpikes, callNum, callLength, usedCalls] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,varargin)
+function [callSpikes, callNum, call_bat_num, callLength, usedCalls] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,varargin)
 
 pnames = {'selectedCalls','timestamps'};
 dflts  = {[cut_call_data.uniqueID],[]};
@@ -2060,6 +2138,7 @@ call_k = 1; % counter for all used calls
 
 callSpikes = cell(1,nCalls); % initialize cell to contain spike times relative to call onset
 callNum = nan(1,nCalls);
+call_bat_num = cell(1,nCalls);
 callLength = nan(1,nCalls);
 usedCalls = true(1,nCalls);
 
@@ -2088,6 +2167,7 @@ for call = 1:nCalls % iterate through all the calls within this .wav file
                 timestampsCall = inRange(timestamps,callposOffset); % all spikes occuring within that time window
                 callSpikes{call_k} = 1e-3*(timestampsCall - relativeCP); % align spikes to call onset/offset, convert to sec, and store
                 callNum(call_k) = cut_call_data(call).uniqueID;
+                call_bat_num{cell_k} = cut_call_data(call).batNum;
                 callLength(call_k) = 1e-3*diff(cp);
                 if vd.timeWarp
                     callSpikes{call_k} = callSpikes{call_k} * vd.warp_call_length/callLength(call_k);
@@ -2103,6 +2183,7 @@ end
 nCalls = call_k - 1; % determine the actual number of calls
 callSpikes = callSpikes(1:nCalls); % truncate list of spikes relative to call onset to length of n_calls
 callNum = callNum(1:nCalls);
+call_bat_num = call_bat_num(1:nCalls);
 callLength = callLength(1:nCalls);
 usedCalls = usedCalls(1:nCalls);
 end
@@ -2359,7 +2440,7 @@ end
 
 end
 
-function [respType, respValency, respStrength, latency]  = sliding_win_test_responsive(vd,cell_k,trialIdx)
+function [respType, respValency, respStrength, latency] = sliding_win_test_responsive(vd,cell_k,trialIdx)
 
 if nargin < 3 || isempty(trialIdx)
     trialIdx = vd.usedCalls{cell_k};
@@ -2396,7 +2477,7 @@ end
 
 end
 
-function [respType, respValency, respStrength, latency]  = cusumResponsive(vd,cell_k,trialIdx)
+function [respType, respValency, respStrength, latency] = cusumResponsive(vd,cell_k,trialIdx)
 
 if nargin < 3 || isempty(trialIdx)
     trialIdx = vd.usedCalls{cell_k};
@@ -2560,7 +2641,7 @@ end
 
 end
 
-function [respType, respValency, respStrength, latency]  = trialBasedResponsive(vd,cell_k,trialIdx)
+function [respType, respValency, respStrength, latency] = trialBasedResponsive(vd,cell_k,trialIdx)
 
 if nargin < 3 || isempty(trialIdx)
     trialIdx = vd.usedCalls{cell_k};
@@ -2624,7 +2705,7 @@ end
 
 end
 
-function [respType, respValency, respStrength, latency]  = std_above_baseline_responsive(vd,cell_k,trialIdx)
+function [respType, respValency, respStrength, latency] = std_above_baseline_responsive(vd,cell_k,trialIdx)
 
 if nargin < 3 || isempty(trialIdx)
     trialIdx = vd.usedCalls{cell_k};
