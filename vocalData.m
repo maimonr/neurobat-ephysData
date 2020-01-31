@@ -1139,169 +1139,71 @@ classdef vocalData < ephysData
             end
 
         end
-        
-        function call_info = get_call_bhv_info(vd,cell_k)
-            if strcmp(vd.batNum{cell_k},vd.batNums{4})
-                
-                expDate = vd.cellInfo{cell_k}(1:strfind(vd.cellInfo{cell_k},vd.tetrodeStr)-1);
-                audioDir = [vd.baseDirs{4} 'bat' vd.batNum{cell_k} filesep 'neurologger_recording' expDate '\audio\ch1\'];
-                
-                try
-                    s = load([audioDir 'juv_call_info_' vd.batNum{cell_k} '_' vd.callType '.mat']);
-                    call_info = s.call_info;
-                catch err
-                    disp(err)
-                    keyboard
-                end
-                
-            else
-                bhv_file_dir = 'E:\ephys\juvenile_recording\bhvFiles\';
-                exp_datestr = datestr(vd.expDay(cell_k),'yyyymmdd');
-                bhvFName = [bhv_file_dir strjoin({'juv_call_info',vd.batNum{cell_k},exp_datestr},'_')];
-                
-                try
-                    s = load(bhvFName);
-                    try
-                        call_info = s.juv_call_info;
-                    catch
-                        try
-                            call_info = s.call_info;
-                        catch err
-                            disp(err)
-                            keyboard
-                        end
-                    end
-                catch
-                    disp('couldn''t find bhv file')
-                    call_info = [];
-                end
+            
+        function [bhvFR,p] = FR_by_behavior(vd,cData,cell_k,selectedBhvs,varargin)
+            
+            pnames = {'minCalls','responseRange','bout_call_range','excludeUnclear'};
+            dflts  = {vd.minCalls,[-vd.preCall vd.postCall],1,true};
+            [minCall,responseRange,bout_call_range,excludeUnclear] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
+            all_call_info = get_all_bhv(cData);
+            expDate = vd.expDay(cell_k);
+            
+            all_call_info = all_call_info([all_call_info.expDate] == expDate);
+            if isempty(all_call_info)
+               [bhvFR,p] = deal(NaN);
+               return
+            end
+            allBhvs = [all_call_info.behaviors];
+            if excludeUnclear
+                excludeIdx = contains(allBhvs,'unclear');
+                all_call_info = all_call_info(~excludeIdx);
+                allBhvs = [all_call_info.behaviors];
             end
             
-        end
-        function bhvs = callID2AudioFile(vd,cData,cell_k)
-            
-            call_info = get_call_bhv_info(vd,cell_k);
-            
-            if isempty(call_info)
-                bhvs = [];
-                return
-            end
-            
-            if strcmp(vd.batNum{cell_k},vd.batNums{4})
-                
-                bhvs = call_info;
-                
-            else
-                
-                callID = vd.callNum{cell_k};
-                
-                juv_call_times = arrayfun(@(x) datetime(x.AudioFile(strfind(x.AudioFile,'T')+1:strfind(x.AudioFile,'_')-1),'InputFormat','yyMMddHHmmss'),call_info);
-                bhvs = struct('AudioFile',[],'juvCall',[],'echoCall',[],'VideoFile',[],'behaviors',[]);
-                
-                for ID_k = 1:length(callID)
-                    fName = cData('callID',callID(ID_k)).fName;
-                    [fPath,fName] = fileparts(fName{:});
-                    fPath = strsplit(fPath,filesep);
-                    fPath = [strjoin(fPath(1:end-1),filesep) filesep];
-                    file_call_pos = cData('callID',callID(ID_k)).file_call_pos;
-                    callTime = datetime(fName(strfind(fName,'T')+1:strfind(fName,'_')-1),'InputFormat','yyMMddHHmmss') + seconds(file_call_pos(1)/cData.fs);
-                    [~,idx] = min(abs(juv_call_times-callTime));
-                    
-                    callData = audioread([fPath 'ch2' filesep call_info(idx).AudioFile]);
-                    callWF = cData('callID',callID(ID_k)).callWF;
-                    match = strfind(callData',callWF');
-                    if ~isempty(match)  %#ok<STREMP>
-                        bhvs(ID_k) = call_info(idx);
-                    else
-                        bhvs(ID_k) = struct('AudioFile',[],'juvCall',[],'echoCall',[],'VideoFile',[],'behaviors',[]);
-                    end
-                end
-                
-                callID = num2cell(callID);
-                [bhvs.callID] = deal(callID{:});
-            end
-        end
-        function bhvIdx = find_call_bhv(vd,cData,cell_k,varargin)
-            
-            bhv = callID2AudioFile(vd,cData,cell_k);
-            nBhvSeq = length(bhv);
-            bhvIdx = true(1,nBhvSeq);
-            
-            for s = 1:nBhvSeq
-                if ~isempty(bhv(s).behaviors)
-                    nBhv = sum(~cellfun(@isempty,bhv(s).behaviors));
-                    incBhv = true(1,nBhv);
-                    for b = 1:nBhv
-                        behaviorString = bhv(s).behaviors{b};
-                        behaviorStringSplit = strsplit(behaviorString,'-');
-                        for subs_k = 1:2:length(varargin)
-                            switch varargin{subs_k}
-                                
-                                case 'juvAdult'
-                                    incBhv(b) = incBhv(b) && strcmpi(behaviorStringSplit{1},varargin{subs_k+1});
-                                    
-                                case 'contact'
-                                    incBhv(b) = incBhv(b) && strcmpi(behaviorStringSplit{2},varargin{subs_k+1});
-                                    
-                                case 'direction'
-                                    incBhv(b) = incBhv(b) && strcmpi(behaviorStringSplit{3},varargin{subs_k+1});
-                                    
-                                case 'bhv'
-                                    incBhv(b) = incBhv(b) && any(strcmpi(behaviorStringSplit{4},varargin{subs_k+1}));
-                            end
-                        end
-                    end
-                    bhvIdx(s) = any(incBhv);
-                    
+            n_bhv_bouts = length(all_call_info);
+            bout_call_nums = cell(1,n_bhv_bouts);
+
+            for k = 1:n_bhv_bouts
+                if ~isnan(all_call_info(k).callID)
+                    bout_call_nums{k} = get_call_bout_nums(cData,all_call_info(k).callID,bout_call_range);
                 else
-                    bhvIdx(s) = false;
+                    bout_call_nums{k} = NaN;
+                end
+            end
+            if length(selectedBhvs) == 1
+                nBhv = 2;
+                bhvIdx{1} = cellfun(@(bhv) contains(bhv,selectedBhvs{1},'IgnoreCase',true),allBhvs);
+                bhvIdx{2} =  ~cellfun(@(bhv) contains(bhv,selectedBhvs{1},'IgnoreCase',true),allBhvs);
+            else
+                nBhv = length(selectedBhvs);
+                bhvIdx = cell(1,nBhv);
+                for bhv_k = 1:nBhv
+                    bhvIdx{bhv_k} = contains(allBhvs,selectedBhvs{bhv_k},'IgnoreCase',true);
                 end
             end
             
-        end
-        function [bhv_trial_idx, non_bhv_trial_idx] = get_calls_by_bhv(vd,cData,cell_k,selectedBhvs)
-            if nargin < 4
-                selectedBhvs = {'bite','strike','claw'}; % select aggresive behaviors
-            end
-            
-            try
-                bhvIdx = find_call_bhv(vd,cData,cell_k,'bhv',selectedBhvs,'juvAdult','Juvenile');
-            catch
-                bhv_trial_idx = [];
-                non_bhv_trial_idx = [];
-                return
-            end
-            
-            bhv_trial_idx = vd.usedCalls{cell_k} & bhvIdx;
-            non_bhv_trial_idx = vd.usedCalls{cell_k} & ~bhvIdx;
-        end
-        function [p,bhv_fr,non_bhv_fr] = FR_by_behavior(vd,cData,cell_k,minCalls,selectedBhvs,responseRange)
-            
-            if nargin < 4
-                minCalls = vd.minCalls;
-                selectedBhvs = {'bite','strike','claw'}; % select aggresive behaviors
-                responseRange = [-0.1 0.1];
-            elseif nargin < 5
-                selectedBhvs = {'bite','strike','claw'}; % select aggresive behaviors
-                responseRange = [-0.1 0.1];
-            elseif nargin < 6
-                responseRange = [-0.1 0.1];
-            end
-            try
-                [bhv_trial_idx, non_bhv_trial_idx] = get_calls_by_bhv(vd,cData,cell_k,selectedBhvs);
-            catch
-                p = NaN;
-                bhv_fr = NaN;
-                non_bhv_fr = NaN;
-                return
-            end
+            callIDs = vd.callNum{cell_k};
+            callIDs = callIDs(vd.usedCalls{cell_k});
             
             [~,t_idx] = inRange(vd.time,responseRange);
             fr = vd.trialFR(cell_k);
-            bhv_fr = mean(fr(bhv_trial_idx,t_idx),2);
-            non_bhv_fr = mean(fr(non_bhv_trial_idx,t_idx),2);
-            if length(bhv_fr) >= minCalls && length(non_bhv_fr) >= minCalls
-                p = ranksum(bhv_fr, non_bhv_fr);
+            fr = fr(vd.usedCalls{cell_k},:);
+            
+            [bhv_fr_idx,bhvFR] = deal(cell(1,nBhv));
+            for bhv_k = 1:nBhv
+                current_bhv_call_IDs = vertcat(bout_call_nums{bhvIdx{bhv_k}});
+                bhv_fr_idx{bhv_k} = ismember(callIDs,current_bhv_call_IDs);
+                bhvFR{bhv_k} = fr(bhv_fr_idx{bhv_k},:);
+            end
+            
+            if nBhv == 2
+                if all(cellfun(@sum,bhv_fr_idx) > minCall)
+                    bhv_test_fr = cellfun(@(fr) mean(fr(:,t_idx),2),bhvFR,'un',0);
+                    p = ranksum(bhv_test_fr{:});
+                else
+                    p = NaN;
+                end
             else
                 p = NaN;
             end
