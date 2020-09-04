@@ -1,8 +1,8 @@
 classdef vocalData < ephysData
     properties(SetAccess = public)
-        spikeRange = [-1 1]
-        callRange = [-1 1]
-        baselineRange = [-1 0]
+        spikeRange = [-3 3]
+        callRange = [-3 3]
+        baselineRange = [-3 -2]
         frBandwidthRange = 2e-3:5e-3:1e-1
         kernelType = 'manual'
         dT = 5e-3
@@ -114,7 +114,7 @@ classdef vocalData < ephysData
             cell_k = 1;
             lastProgress = 0;
             
-            if any(strcmp(vd.expType{1},{'adult','adult_operant'}))
+            if any(strcmp(vd.expType{1},{'adult','adult_operant','adult_social'}))
                 
                 nBats = length(vd.batNums);
                 spike_file_names = dir([vd.spike_data_dir{1} '*.csv']);
@@ -176,7 +176,7 @@ classdef vocalData < ephysData
                         % get sorting quality for this cell
                         if strcmp(vd.cellType,'singleUnit') 
                             sortingInfo_idx = strcmp({sortingInfo.cellInfo},cellInfo) & strcmp({sortingInfo.batNum},vd.batNum{cell_k});
-                            if strcmp(vd.expType{1},'adult')
+                            if any(strcmp(vd.expType{1},{'adult','adult_social'}))
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance;
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
@@ -546,19 +546,31 @@ classdef vocalData < ephysData
                 vd.plotFR(c);
                 title([vd.batNum{c} '-' strjoin(strsplit(vd.cellInfo{c},'_'),'-')]);
                 commandwindow
-                class = input('misclassified?');
+                class = [];
+                while isempty(class)
+                    class = input('misclassified?');
+                    if isempty(class)
+                        continue
+                    end
+                end
                 if class == 1 || class == 0
                     vd.misclassified(c) = class;
                 else
                     vd.misclassified(c) = Inf;
                     break
                 end
+                
                 clf
             end
             
             
         end
-        function plotFR(vd,cell_k,resp_trial_flag)
+        function plotFR(vd,cell_k,varargin)
+            
+            pnames = {'resp_trial_flag','plot_baseline'};
+            dflts  = {false,true};
+            [resp_trial_flag,plot_baseline] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
             
             if ~vd.usable(cell_k)
                 return
@@ -573,6 +585,8 @@ classdef vocalData < ephysData
                 lineColor = 'g';
             elseif strcmp(vd.callType,'operant_reward')
                 lineColor = 'cyan';
+            elseif strcmp(vd.callType,'social')
+                lineColor = 'b';
             end
             
             if nargin < 3
@@ -601,16 +615,18 @@ classdef vocalData < ephysData
                 frDev = vd.devFR{cell_k}';
             end
             
-            boundedline(vd.time,fr,frDev,lineColor);
-            if vd.avgBaseline(cell_k) - vd.devBaseline(cell_k) > 0
-                plot(tRange,repmat(vd.avgBaseline(cell_k) - vd.devBaseline(cell_k),1,2),'k.-','LineWidth',2)
-                plot(tRange,repmat(vd.avgBaseline(cell_k) - 2*vd.devBaseline(cell_k),1,2),'k-','LineWidth',1)
-            else
-                plot(tRange,zeros(1,2),'k.-','LineWidth',2)
+            boundedline(vd.time,fr,frDev,lineColor,'alpha');
+            if plot_baseline
+                if vd.avgBaseline(cell_k) - vd.devBaseline(cell_k) > 0
+                    plot(tRange,repmat(vd.avgBaseline(cell_k) - vd.devBaseline(cell_k),1,2),'k.-','LineWidth',2)
+                    plot(tRange,repmat(vd.avgBaseline(cell_k) - 2*vd.devBaseline(cell_k),1,2),'k-','LineWidth',1)
+                else
+                    plot(tRange,zeros(1,2),'k.-','LineWidth',2)
+                end
+                plot(tRange,repmat(vd.avgBaseline(cell_k) + vd.devBaseline(cell_k),1,2),'k.-','LineWidth',2)
+                plot(tRange,repmat(vd.avgBaseline(cell_k) + 2*vd.devBaseline(cell_k),1,2),'k-','LineWidth',1)
             end
-            plot(tRange,repmat(vd.avgBaseline(cell_k) + vd.devBaseline(cell_k),1,2),'k.-','LineWidth',2)
-            plot(tRange,repmat(vd.avgBaseline(cell_k) + 2*vd.devBaseline(cell_k),1,2),'k-','LineWidth',1)
-            plot(repmat(vd.latency(cell_k),1,2),get(gca,'ylim'),'k:','LineWidth',2);
+            plot(repmat(vd.latency(cell_k),1,2),get(gca,'ylim'),[lineColor ':'],'LineWidth',2);
             xlim(tRange);
             
             xlabel('Time (s)');
@@ -1058,20 +1074,26 @@ classdef vocalData < ephysData
         function [bat_fr_latency, used_call_idx, cell_ks, manual_selected_cells] = individual_bat_resp(vd,cData,varargin)
             
             pnames = {'cell_ks','respType','minCalls','ICI_limit','plotFlag','timeLims','target_bat_num'};
-            dflts  = {vd.responsiveCells,vd.latencyType,vd.minCalls,abs(vd.spikeRange(1)),false,vd.spikeRange,[]};
+            dflts  = {vd.responsiveCells,vd.latencyType,vd.minCalls,abs(vd.spikeRange(1)),false,[],[]};
             [cell_ks,resp_latency_type,minCall,ICI_limit,plotFlag,timeLims,target_bat_num] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
+            if isempty(timeLims)
+                timeLims = vd.spikeRange + vd.constantBW.*[1 -1];
+            end
             
             [t,t_idx] = inRange(vd.time,timeLims);
             nCell = length(cell_ks);
             bat_fr_latency = cell(1,nCell);
             used_call_idx = cell(1,nCell);
             manual_selected_cells = nan(1,nCell);
-            colors = {'r','g','b','k'};
+            max_n_bat = 8;
+            subplot_idxs = [1 2];
+            colors = hsv(max_n_bat);
             k = 1;
             
             for cell_k = cell_ks
                 if plotFlag
-                    cla
+                    clf
                 end
                 trialFR = vd.trialFR(cell_k);
                 callIDs = vd.callNum{cell_k}';
@@ -1092,7 +1114,7 @@ classdef vocalData < ephysData
                     select_bat_nums_cat = num2cell(select_bat_nums_cat);
                 end
                 n_select_bats = length(select_bat_nums_cat);
-                [bat_fr_latency{k}, used_call_idx{k}, h] = deal(cell(1,n_select_bats));
+                [bat_fr_latency{k}, used_call_idx{k}] = deal(cell(1,n_select_bats));
                 for bat_k = 1:n_select_bats 
                     used_call_bat_idx = ICI > ICI_limit & cellfun(@(bNum) any(ismember(bNum,select_bat_nums_cat{bat_k})),call_bat_nums_cat);
                     if sum(used_call_bat_idx)>minCall
@@ -1104,36 +1126,69 @@ classdef vocalData < ephysData
                 plot_cell_flag = (plotFlag > 0 && plotFlag < 3) || (plotFlag == 3 && any(~isnan([ bat_fr_latency{k}{:}])));
                 
                 if plot_cell_flag
+                    n_plotted_bats = 1;
+                    maxFR = 1;
+                    minFR = Inf;
                     for bat_k = 1:n_select_bats
                         batFR = trialFR(used_call_idx{k}{bat_k},t_idx);
-                        if sum(used_call_idx{k}{bat_k})>minCall
-                            [~,h{bat_k}] = boundedline(t,mean(batFR),std(batFR)/sqrt(sum(used_call_idx{k}{bat_k})),colors{bat_k},'alpha');
-                            h{bat_k} = findobj(h{bat_k});
+                        bat_idx = setdiff(1:n_select_bats,bat_k);
+                        nCall = sum(used_call_idx{k}{bat_k});
+                        other_bat_idx = any([used_call_idx{k}{bat_idx}],2);
+                        other_batFR = trialFR(other_bat_idx,t_idx);
+                        if nCall>minCall && sum(other_bat_idx)>minCall
+                            subplot(subplot_idxs(1),subplot_idxs(2),n_plotted_bats)
+                            cla
+                            hold on
+                            [~,h(1)] = boundedline(t,mean(batFR),std(batFR)/sqrt(nCall),'cmap',colors(bat_k,:),'alpha');
+                            [~,h(2)] = boundedline(t,mean(other_batFR),std(other_batFR)/sqrt(sum(other_bat_idx)),'k','alpha');
+                            maxFR = max(max([mean(batFR) mean(other_batFR)]),maxFR);
+                            minFR = min(min([mean(batFR) mean(other_batFR)]),minFR);
+                            for h_k = 1:2
+                                h(h_k) = findobj(h(h_k));
+                            end
+                            legendStr{1} = strjoin([string(select_bat_nums_cat{bat_k}) '-' num2str(nCall) '-' num2str(bat_fr_latency{k}{bat_k})]);
+                            legendStr{2} = ['Other bats - ' num2str(sum(other_bat_idx))];
+                            legend(h,legendStr);
+                            legend box off
+                            title(sprintf('%s - cell %d',vd.batNum{cell_k},cell_k))
+                            n_plotted_bats = n_plotted_bats + 1;
                         end
                     end
-                end
-                
-                if plot_cell_flag
-                    used_idx = cellfun(@sum,used_call_idx{k})>minCall;
-                    if any(used_idx)
-                        legend_str = cellfun(@(bNum,nCall,lat) cell2mat([strjoin(string(bNum)) '-' num2str(sum(nCall)) '-' num2str(lat)]),select_bat_nums_cat(used_idx),used_call_idx{k}(used_idx),bat_fr_latency{k}(used_idx),'un',0);
-                        legend([h{used_idx}],legend_str{:},'Location','northeastoutside')
-                        title(sprintf('%s - cell %d',vd.batNum{cell_k},cell_k))
-                        axis square
+                    n_plotted_bats = n_plotted_bats - 1;
+                    for bat_k = 1:n_plotted_bats
+                        subplot(subplot_idxs(1),subplot_idxs(2),bat_k)
+                        ylim([minFR*0.75 maxFR*1.5])
                         xlabel('Time (s)')
                         ylabel('Firing rate (Hz)')
-                        set(gca,'FontSize',45);
+                        set(gca,'FontSize',15);
                         xlim(timeLims)
-                        legend box off
-                        box off
-                        if plotFlag ~= 2
-                            selectCell = input('?');
-                            if ~isempty(selectCell)
-                                manual_selected_cells(k) = selectCell;
-                            end
-                        end
                     end
+                    
                 end
+                if n_plotted_bats > 0
+                    selectCell = input('?');
+                end
+%                 if plot_cell_flag
+%                     used_idx = cellfun(@sum,used_call_idx{k})>minCall;
+%                     if any(used_idx)
+%                         legend_str = cellfun(@(bNum,nCall,lat) cell2mat([strjoin(string(bNum)) '-' num2str(sum(nCall)) '-' num2str(lat)]),select_bat_nums_cat(used_idx),used_call_idx{k}(used_idx),bat_fr_latency{k}(used_idx),'un',0);
+%                         legend([h{used_idx}],legend_str{:},'Location','northeast')
+%                         title(sprintf('%s - cell %d',vd.batNum{cell_k},cell_k))
+%                         axis square
+%                         xlabel('Time (s)')
+%                         ylabel('Firing rate (Hz)')
+%                         set(gca,'FontSize',25);
+%                         xlim(timeLims)
+%                         legend box off
+%                         box off
+%                         if plotFlag ~= 2
+%                             selectCell = input('?');
+%                             if ~isempty(selectCell)
+%                                 manual_selected_cells(k) = selectCell;
+%                             end
+%                         end
+%                     end
+%                 end
                 
                 k = k + 1;
             end
@@ -1352,6 +1407,14 @@ classdef vocalData < ephysData
                     case 'operant'
                         audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'operant',['box' vd.boxNums{b}]);
                 end
+            elseif strcmp(vd.expType{b},'adult_social')
+                baseDir = vd.remoteDirs{b};
+                switch vd.callType
+                    case 'call'
+                        audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'audio','vocal','ch1');
+                    case 'social'
+                        audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'social','vocal','ch1');
+                end
             end
             high_activity_t = 1e3*t(locs);
             event_pos_data = struct('file_event_pos',[],'cut',[],'corrected_eventpos',[],'f_num',[],'fName',[],'fs',[],'noise',[],'expDay',[]);
@@ -1455,7 +1518,7 @@ classdef vocalData < ephysData
             b = vd.batIdx(cell_k);
             [stabilityBounds, ~, audio2nlg, ttDir, spikeDir] = getCellInfo(vd,cell_k,'stabilityBounds');
             
-            if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
+            if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
                 try
                     
                     timestamps = csvread(spikeDir);
@@ -1727,7 +1790,7 @@ cellInfo = vd.cellInfo{cell_k};
 baseDir = vd.baseDirs{b};
 batNum = vd.batNums{b};
 
-if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
+if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
     
     spikeDir = fullfile(baseDir,'spike_data',[batNum '_' cellInfo '.csv']);
     %       If we want to calculate spike waveform stats, need to include path to actual .ntt file
@@ -1741,6 +1804,11 @@ if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
         elseif strcmp(vd.callType,'operant')
             s = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat']),'first_nlg_pulse_time','first_audio_pulse_time');
             audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit_operant_box_'  vd.boxNums{b} '.mat'])); % load fit data to sync audio to nlg data
+            audio2nlg.first_nlg_pulse_time = s.first_nlg_pulse_time;
+            audio2nlg.first_audio_pulse_time = s.first_audio_pulse_time;
+        elseif strcmp(vd.callType,'social')
+            s = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat']),'first_nlg_pulse_time','first_audio_pulse_time');
+            audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit_social.mat'])); % load fit data to sync audio to nlg data
             audio2nlg.first_nlg_pulse_time = s.first_nlg_pulse_time;
             audio2nlg.first_audio_pulse_time = s.first_audio_pulse_time;
         end
@@ -1760,16 +1828,20 @@ if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
     
     if any(strcmp(varargin,'cut_call_data'))
         
-        if any(strcmp(vd.callType,{'call','operant'}))
+        if any(strcmp(vd.callType,{'call','operant','social'}))
             
-            if strcmp(vd.callType,'call')
-                cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data.mat']);
-            elseif strcmp(vd.callType,'operant')
-                cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data_operant_box_' vd.boxNums{b} '.mat']);
-                if any(strcmp(vd.operant_reward_status,{'rewardedOnly','notRewarded'}))
-                    operant_reward_delay = 5e3;
-                    operantEvents = get_operant_events(vd,cell_k);
-                end
+            switch vd.callType
+                
+                case 'call'
+                    cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data.mat']);
+                case 'operant'
+                    cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data_operant_box_' vd.boxNums{b} '.mat']);
+                    if any(strcmp(vd.operant_reward_status,{'rewardedOnly','notRewarded'}))
+                        operant_reward_delay = 5e3;
+                        operantEvents = get_operant_events(vd,cell_k);
+                    end
+                case 'social'
+                    cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data_social.mat']);
             end
             
             if exist(cut_call_fname,'file')
@@ -2069,7 +2141,7 @@ for call = 1:nCalls % iterate through all the calls within this .wav file
                 timestampsCall = inRange(timestamps,callposOffset); % all spikes occuring within that time window
                 callSpikes{call_k} = 1e-3*(timestampsCall - relativeCP); % align spikes to call onset/offset, convert to sec, and store
                 callNum(call_k) = cut_call_data(call).uniqueID;
-                call_bat_num{cell_k} = cut_call_data(call).batNum;
+                call_bat_num{call_k} = cut_call_data(call).batNum;
                 callLength(call_k) = 1e-3*diff(cp);
                 if vd.timeWarp
                     callSpikes{call_k} = callSpikes{call_k} * vd.warp_call_length/callLength(call_k);
@@ -2108,7 +2180,7 @@ switch vd.baselineMethod
             timestamps = getSpikes(vd,cell_k);
         end
         
-        if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
+        if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
             timestamps = timestamps - timestamps(1);
         end
         
@@ -2137,7 +2209,7 @@ switch vd.baselineMethod
         callRange = [cut_call_data(1).corrected_callpos(1) cut_call_data(end).corrected_callpos(2)];
         timestamps = inRange(timestamps,callRange);
         
-        if any(strcmp(vd.expType{b},{'adult','adult_operant'}))
+        if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
             timestamps = timestamps - timestamps(1);
         end
         

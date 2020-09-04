@@ -1,6 +1,7 @@
 classdef ephysData
     properties 
         baseDirs
+        remoteDirs
         batNums
         boxNums
         dateFormat
@@ -61,6 +62,20 @@ classdef ephysData
                     ed.analysisDir = repmat({'E:\ephys\adult_operant_recording\data_analysis_results\'},1,length(ed.batNums));
                     ed.activeChannels = {setdiff(0:15,10),0:15,0:15,setdiff(0:15,5)};
                     ed.spike_data_dir =  repmat({'E:\ephys\adult_operant_recording\spike_data\'},1,length(ed.batNums));
+                    ed.lfp_fs = 31250;
+                    ed.lfp_data_dir = [];
+                    
+                case 'adult_social'
+                    
+                    ed.batNums = {'13688','11636','14612','11682','71216'};
+                    ed.boxNums = num2cell(nan(1,length(ed.batNums)));
+                    ed.baseDirs = repmat({'E:\ephys\adult_social_recording\'},1,length(ed.batNums));
+                    ed.remoteDirs = repmat({'F:\adult_social_recording\'},1,length(ed.batNums));
+                    ed.dateFormat = 'yyyyMMdd';
+                    ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
+                    ed.analysisDir = repmat({'E:\ephys\adult_social_recording\data_analysis_results\'},1,length(ed.batNums));
+                    ed.activeChannels = {0:15,0:15,setdiff(0:15,8:9),0:15,0:15};
+                    ed.spike_data_dir =  repmat({'E:\ephys\adult_social_recording\spike_data\'},1,length(ed.batNums));
                     ed.lfp_fs = 31250;
                     ed.lfp_data_dir = [];
                     
