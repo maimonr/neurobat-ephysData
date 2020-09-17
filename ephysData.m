@@ -1,22 +1,28 @@
 classdef ephysData
-    properties 
+    properties
         baseDirs
-        remoteDirs
         batNums
         boxNums
         dateFormat
-        birthDates 
-        analysisDir 
+        birthDates
+        analysisDir
         activeChannels
         spike_data_dir
         lfp_data_dir
         lfp_fs
         expType
         callType
+        
+        serverStr = 'server1';
+        pathStr = 'users\maimon\';
+        
+        remote_drive_letter
+        serverPath
+        recLogs
     end
     
     methods
-       
+        
         function ed = ephysData(expType)
             
             if nargin == 0
@@ -24,6 +30,9 @@ classdef ephysData
             else
                 ed.expType = expType;
             end
+            
+            ed.remote_drive_letter = get_remote_drive_letter(ed);
+            ed.serverPath = get_server_path(ed);
             
             switch ed.expType
                 
@@ -69,15 +78,16 @@ classdef ephysData
                     
                     ed.batNums = {'13688','11636','14612','11682','71216'};
                     ed.boxNums = num2cell(nan(1,length(ed.batNums)));
-                    ed.baseDirs = repmat({'E:\ephys\adult_social_recording\'},1,length(ed.batNums));
-                    ed.remoteDirs = repmat({'F:\adult_social_recording\'},1,length(ed.batNums));
+                    
+                    ed.baseDirs = repmat({ed.serverPath},1,length(ed.batNums));
+                    
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
-                    ed.analysisDir = repmat({'E:\ephys\adult_social_recording\data_analysis_results\'},1,length(ed.batNums));
+                    ed.analysisDir = repmat({fullfile(ed.serverPath,'data_analysis_results')},1,length(ed.batNums));
                     ed.activeChannels = {0:15,0:15,setdiff(0:15,8:9),0:15,0:15};
-                    ed.spike_data_dir =  repmat({'E:\ephys\adult_social_recording\spike_data\'},1,length(ed.batNums));
+                    ed.spike_data_dir =  repmat({fullfile(ed.serverPath,'spike_data')},1,length(ed.batNums));
                     ed.lfp_fs = 31250;
-                    ed.lfp_data_dir = [];
+                    ed.lfp_data_dir = repmat({fullfile(ed.serverPath,'lfp_data')},1,length(ed.batNums));
                     
                 case 'adult_wujie'
                     
@@ -91,11 +101,23 @@ classdef ephysData
                     ed.lfp_data_dir = 'E:\ephys\wujie_adult_recording\lfp_data\';
                     
             end
-            
-            ed.expType = repmat({ed.expType},1,length(ed.batNums));
+            ed.recLogs = readtable(fullfile(ed.baseDirs{1},'documents','recording_logs.csv'));
             
         end
-        
     end
-    
+end
+
+function remote_drive_letter = get_remote_drive_letter(ed)
+[~,caption_str]= dos('wmic logicaldisk get caption');
+[~,name_str]= dos('wmic logicaldisk get volumename');
+
+caption_str = strsplit(caption_str,'\n');
+name_str = strsplit(name_str,'\n');
+
+remote_drive_letter = caption_str{contains(name_str,ed.serverStr)};
+remote_drive_letter = deblank(remote_drive_letter);
+end
+
+function serverPath = get_server_path(ed)
+serverPath = fullfile(ed.remote_drive_letter,ed.pathStr,[ed.expType '_recording']);
 end
