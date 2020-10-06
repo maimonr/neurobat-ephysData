@@ -114,17 +114,17 @@ classdef vocalData < ephysData
             cell_k = 1;
             lastProgress = 0;
             
-            if any(strcmp(vd.expType{1},{'adult','adult_operant','adult_social'}))
+            if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
                 
                 nBats = length(vd.batNums);
-                spike_file_names = dir([vd.spike_data_dir{1} '*.csv']);
+                spike_file_names = dir(fullfile(vd.spike_data_dir{1},'*.csv'));
                 single_unit_idx = arrayfun(@(fName) contains(fName.name,vd.clusterStr),spike_file_names);
                 
                 switch vd.cellType
                     case 'singleUnit'
                         spike_file_names = spike_file_names(single_unit_idx);
                         
-                        sortingInfo = load([vd.analysisDir{1} 'sortingInfo.mat']);
+                        sortingInfo = load(fullfile(vd.analysisDir{1}, 'sortingInfo.mat'));
                         sortingInfo = sortingInfo.sortingInfo;
                         cellInfo_regexp_str = '\d{8}_TT\d_SS_\d{2}';
                         
@@ -176,11 +176,11 @@ classdef vocalData < ephysData
                         % get sorting quality for this cell
                         if strcmp(vd.cellType,'singleUnit') 
                             sortingInfo_idx = strcmp({sortingInfo.cellInfo},cellInfo) & strcmp({sortingInfo.batNum},vd.batNum{cell_k});
-                            if any(strcmp(vd.expType{1},{'adult','adult_social'}))
+                            if any(strcmp(vd.expType,{'adult','adult_social'}))
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance;
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
-                            elseif strcmp(vd.expType{1},'adult_operant')
+                            elseif strcmp(vd.expType,'adult_operant')
                                 
                                 if strcmp(vd.callType,'call') % sorting quality for this experiment is calculated for each session
                                     sorting_info_str = 'communication';
@@ -239,7 +239,7 @@ classdef vocalData < ephysData
                     end
                 end
                 
-            elseif strcmp(vd.expType{1},'adult_wujie')
+            elseif strcmp(vd.expType,'adult_wujie')
                 
                 spike_file_names = dir([vd.spike_data_dir{1} '*.csv']);
                 spike_file_names = spike_file_names(arrayfun(@(x) contains(x.name,vd.batNums),spike_file_names));
@@ -304,7 +304,7 @@ classdef vocalData < ephysData
                 end
                 
                 
-            elseif strcmp(vd.expType{1},'juvenile')
+            elseif strcmp(vd.expType,'juvenile')
                 addpath('C:\Users\phyllo\Documents\Maimon\ephys\scripts\experimentation_scripts\Wujie\MatlabImportExport_v6.0.0\')
                 nBats = length(vd.batNums);
                 sortedCells = load([vd.analysisDir{1} 'sortedCells.mat']);
@@ -1194,7 +1194,95 @@ classdef vocalData < ephysData
             end
 
         end
+        function [indv_bat_fr, other_bat_fr, p] = get_indv_bat_fr(vd,cell_k,varargin)
             
+            pnames = {'call_dist_map','call_dist_thresh','minCalls','responseRange'};
+            dflts  = {[],25,vd.minCalls,[-vd.preCall vd.postCall]};
+            [call_dist_map, call_dist_thresh, min_bat_calls, responseRange] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
+            [indv_bat_fr, other_bat_fr, p] = deal(NaN);
+            if ~vd.usable(cell_k)
+                return
+            end
+            [~,call_t_idx] = inRange(vd.time,responseRange);
+            
+            self_bat_num = vd.batNum{cell_k};
+            trialFR = vd.trialFR(cell_k);
+            calling_bat_nums = vd.call_bat_num{cell_k};
+            calling_bat_nums(cellfun(@iscell,calling_bat_nums)) = {'unidentified'};
+            calling_bat_nums = categorical(calling_bat_nums);
+            used_call_idx = vd.usedCalls{cell_k};
+            if ~isempty(call_dist_map)
+                call_dist_idx = exclude_by_dist(vd,cell_k,call_dist_map,call_dist_thresh);
+                used_call_idx = used_call_idx & call_dist_idx;
+            end
+            
+            call_bat_cats = unique(setdiff(calling_bat_nums,{'unidentified',self_bat_num}));
+            
+            N = histcounts(calling_bat_nums(used_call_idx),call_bat_cats);
+            
+            used_bat_nums = call_bat_cats(N >= min_bat_calls);
+            if isempty(used_bat_nums)
+                return
+            end
+            
+            indv_bat_fr = containers.Map('KeyType','double','ValueType','any');
+            other_bat_fr = containers.Map('KeyType','double','ValueType','any');
+            p = containers.Map('KeyType','double','ValueType','any');
+            for bat_num = used_bat_nums
+                callIdx = calling_bat_nums == bat_num & used_call_idx;
+                batKey = str2double(char(bat_num));
+                indv_bat_fr(batKey) = trialFR(callIdx,:);
+                
+                other_call_idx = calling_bat_nums ~= bat_num & used_call_idx;
+                if sum(callIdx) > min_bat_calls
+                    other_bat_fr(batKey) = trialFR(other_call_idx,:);
+                    p = ranksum(mean(trialFR(callIdx,call_t_idx),2),mean(trialFR(other_call_idx,call_t_idx),2));
+                end
+            end
+            
+        end
+        function [frMod,clustFr,clust_bat_nums,p] = FR_by_dist(vd,expDist,cell_k,varargin)
+            
+            pnames = {'minCalls','responseRange','call_dist_thresh'};
+            dflts  = {vd.minCalls,[-vd.preCall vd.postCall],25};
+            [minCall,responseRange,call_dist_thresh] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
+            
+            [frMod,clustFr,clust_bat_nums,p] = deal(NaN);
+            [~,call_t_idx] = inRange(vd.time,responseRange);
+            exp_day_str = datestr(vd.expDay(cell_k),'mmddyyyy');
+            if ~isKey(expDist,exp_day_str) || ~vd.usable(cell_k)
+                return
+            end
+            
+            current_exp_dist = expDist(exp_day_str);
+            self_b_num = vd.batNum{cell_k};
+            calling_bat_nums = vd.call_bat_num{cell_k};
+            multi_bat_idx = cellfun(@iscell,calling_bat_nums);
+            calling_bat_nums(multi_bat_idx) = cellfun(@(x) x(1),calling_bat_nums(multi_bat_idx));
+            call_bat_keys = cellfun(@(bNum) strjoin(sort({bNum,self_b_num}),'-'),calling_bat_nums,'un',0);
+            call_bat_dist = nan(1,length(calling_bat_nums));
+            keyIdx = cellfun(@(key) isKey(current_exp_dist,key),call_bat_keys);
+            call_bat_dist(keyIdx) = cellfun(@(batKey) nanmean(current_exp_dist(batKey)),call_bat_keys(keyIdx));
+            distIdx = {call_bat_dist < call_dist_thresh,call_bat_dist > call_dist_thresh};
+            trialFR = vd.trialFR(cell_k);
+            used_call_idx = vd.usedCalls{cell_k} & ~isnan(call_bat_dist);
+            callIdx = cellfun(@(dIdx) dIdx & used_call_idx,distIdx,'un',0);
+            baselineFr = vd.avgBaseline(cell_k);
+            
+            if any(cellfun(@sum,callIdx) < minCall)
+                return
+            end
+            [frMod,clustFr,clust_bat_nums] = deal(cell(1,2));
+            for clust_k = 1:2
+                callFr = mean(trialFR(callIdx{clust_k},call_t_idx),2);
+                frMod{clust_k} = callFr - baselineFr;
+                clustFr{clust_k} = trialFR(callIdx{clust_k},:);
+                clust_bat_nums{clust_k} = calling_bat_nums(callIdx{clust_k}); 
+            end
+            p = ranksum(frMod{:});
+        end
         function [bhvFR,p] = FR_by_behavior(vd,cData,cell_k,selectedBhvs,varargin)
             
             pnames = {'minCalls','responseRange','bout_call_range','excludeUnclear'};
@@ -1396,18 +1484,18 @@ classdef vocalData < ephysData
             locs = locs(topIdx);
             
             b = vd.batIdx(cell_k);
-            if strcmp(vd.expType{b},'juvenile')
+            if strcmp(vd.expType,'juvenile')
                 ttStr = 'TT';
                 audio_dir = fullfile(vd.baseDirs{b},['bat' vd.batNum{cell_k}],['neurologger_recording' vd.cellInfo{cell_k}(1:strfind(vd.cellInfo{cell_k},ttStr)-1)],'audio','ch1');
-            elseif any(strcmp(vd.expType{b},{'adult','adult_operant'}))
-                baseDir = fullfile('Y:\users\maimon\', [vd.expType{b} '_recording\']);
+            elseif any(strcmp(vd.expType,{'adult','adult_operant'}))
+                baseDir = fullfile('Y:\users\maimon\', [vd.expType '_recording\']);
                 switch vd.callType
                     case 'call'
                         audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'audio','communication','ch1');
                     case 'operant'
                         audio_dir = fullfile(baseDir,datestr(vd.expDay(cell_k),'mmddyyyy'),'operant',['box' vd.boxNums{b}]);
                 end
-            elseif strcmp(vd.expType{b},'adult_social')
+            elseif strcmp(vd.expType,'adult_social')
                 baseDir = vd.remoteDirs{b};
                 switch vd.callType
                     case 'call'
@@ -1518,7 +1606,7 @@ classdef vocalData < ephysData
             b = vd.batIdx(cell_k);
             [stabilityBounds, ~, audio2nlg, ttDir, spikeDir] = getCellInfo(vd,cell_k,'stabilityBounds');
             
-            if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
+            if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
                 try
                     
                     timestamps = csvread(spikeDir);
@@ -1537,14 +1625,14 @@ classdef vocalData < ephysData
                     timestamps = timestamps';
                 end
                 
-            elseif strcmp(vd.expType{b},'adult_wujie')
+            elseif strcmp(vd.expType,'adult_wujie')
                 
                 timestamps = csvread([vd.spike_data_dir{b} vd.batNum{cell_k} '_' vd.cellInfo{cell_k} '.csv']);
                 if size(timestamps,1) ~= 1
                     timestamps = timestamps';
                 end
                 
-            elseif strcmp(vd.expType{b},'juvenile')
+            elseif strcmp(vd.expType,'juvenile')
                 timestamps = Nlx2MatSpike(ttDir,[1 0 0 0 0],0,1,[]); % load sorted cell data
                 timestamps = 1e-3*timestamps - audio2nlg.first_nlg_pulse_time; % convert to ms and align to first TTL pulse on the NLG
                 timestamps = inRange(timestamps,stabilityBounds);
@@ -1790,7 +1878,7 @@ cellInfo = vd.cellInfo{cell_k};
 baseDir = vd.baseDirs{b};
 batNum = vd.batNums{b};
 
-if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
+if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
     
     spikeDir = fullfile(baseDir,'spike_data',[batNum '_' cellInfo '.csv']);
     %       If we want to calculate spike waveform stats, need to include path to actual .ntt file
@@ -1936,7 +2024,7 @@ if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
     stabilityBounds = stabilityBounds - audio2nlg.first_nlg_pulse_time;
     success = true;
     
-elseif strcmp(vd.expType{b},'adult_wujie')
+elseif strcmp(vd.expType,'adult_wujie')
     
     expDate = cellInfo(1:strfind(cellInfo,vd.tetrodeStr)-1);
     audioDir = [baseDir 'neurologger_recording' expDate '\audio\ch1\']; % directory where .wav files are stored (and has a subfolder 'Analyzed_auto')
@@ -1997,7 +2085,7 @@ elseif strcmp(vd.expType{b},'adult_wujie')
     end
     success = true;
     
-elseif strcmp(vd.expType{b},'juvenile')
+elseif strcmp(vd.expType,'juvenile')
     
     cluster_num_idx = strfind(cellInfo,vd.clusterStr)+length(vd.clusterStr);
     tt_num_idx = strfind(cellInfo,vd.tetrodeStr )+length(vd.tetrodeStr );
@@ -2180,7 +2268,7 @@ switch vd.baselineMethod
             timestamps = getSpikes(vd,cell_k);
         end
         
-        if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
+        if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
             timestamps = timestamps - timestamps(1);
         end
         
@@ -2209,7 +2297,7 @@ switch vd.baselineMethod
         callRange = [cut_call_data(1).corrected_callpos(1) cut_call_data(end).corrected_callpos(2)];
         timestamps = inRange(timestamps,callRange);
         
-        if any(strcmp(vd.expType{b},{'adult','adult_operant','adult_social'}))
+        if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
             timestamps = timestamps - timestamps(1);
         end
         
@@ -2788,6 +2876,26 @@ else
 end
 
 medianISI = median(ISIs);
+end
+
+function call_dist_idx = exclude_by_dist(vd,cell_k,call_dist_map,call_dist_thresh)
+
+callIDs = vd.callNum{cell_k};
+calling_bat_nums = vd.call_bat_num{cell_k};
+self_bat_num = vd.batNum(cell_k);
+call_dist_idx = false(1,length(callIDs));
+call_k = 1;
+for callID = callIDs
+    if isKey(call_dist_map,callID) && ~iscell(calling_bat_nums{call_k})
+        bat_pair_str = strjoin(sort([calling_bat_nums(call_k),self_bat_num]),'-');
+        current_call_dist = call_dist_map(callID);
+        if isKey(current_call_dist,bat_pair_str)
+            call_dist_idx(call_k) = current_call_dist(bat_pair_str) < call_dist_thresh;
+        end
+    end
+    call_k = call_k + 1;
+end
+
 end
 
 function [xSub,idx] = inRange(x,bounds)
