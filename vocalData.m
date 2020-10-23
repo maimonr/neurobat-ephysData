@@ -90,9 +90,9 @@ classdef vocalData < ephysData
     methods
         function vd = vocalData(varargin)
             
-            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls','operant_reward_status'};
-            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15,'rewardedOnly'};
-            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls,operant_reward_status] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls','operant_reward_status','useSNAP'};
+            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15,'rewardedOnly',false};
+            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls,operant_reward_status,useSNAP] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             
             vd = vd@ephysData(expType);
             
@@ -105,6 +105,11 @@ classdef vocalData < ephysData
             
             if ~isempty(vd_update)
                 vd = vd_update;
+            end
+            
+            if useSNAP
+                vd.analysisDir = cellfun(@(bDir) fullfile(bDir,'SNAP_sorter_test'),vd.baseDirs,'un',0);
+                vd.spike_data_dir = cellfun(@(bDir) fullfile(bDir,'SNAP_sorter_test','spike_data'),vd.baseDirs,'un',0);
             end
             
             use_select_cells = ~isempty(selectCells);
@@ -176,12 +181,11 @@ classdef vocalData < ephysData
                         % get sorting quality for this cell
                         if strcmp(vd.cellType,'singleUnit') 
                             sortingInfo_idx = strcmp({sortingInfo.cellInfo},cellInfo) & strcmp({sortingInfo.batNum},vd.batNum{cell_k});
-                            if any(strcmp(vd.expType,{'adult','adult_social'}))
+                            if isnumeric(sortingInfo(sortingInfo_idx).isolationDistance)
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance;
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
-                            elseif strcmp(vd.expType,'adult_operant')
-                                
+                            else
                                 if strcmp(vd.callType,'call') % sorting quality for this experiment is calculated for each session
                                     sorting_info_str = 'communication';
                                 elseif any(strcmp(vd.callType,{'operant','operant_reward'}))
@@ -1880,7 +1884,7 @@ batNum = vd.batNums{b};
 
 if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
     
-    spikeDir = fullfile(baseDir,'spike_data',[batNum '_' cellInfo '.csv']);
+    spikeDir = fullfile(vd.spike_data_dir{b},[batNum '_' cellInfo '.csv']);
     %       If we want to calculate spike waveform stats, need to include path to actual .ntt file
     ttDir = [];
     call_data_dir = fullfile(baseDir,'call_data');
@@ -2179,7 +2183,11 @@ end
 
 [operantEvents.eventTimes,idx] = sort(operantEvents.eventTimes);
 operantEvents.food_port_status = operantEvents.food_port_status(idx,:);
-operantEvents.delay2reward = operantEvents.delay2reward(idx,:);
+if isfield(operantEvents,'delay2reward')
+    operantEvents.delay2reward = operantEvents.delay2reward(idx,:);
+else
+     operantEvents.delay2reward = nan(length(idx),1);
+end
 
 end
 
