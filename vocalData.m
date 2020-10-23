@@ -571,9 +571,9 @@ classdef vocalData < ephysData
         end
         function plotFR(vd,cell_k,varargin)
             
-            pnames = {'resp_trial_flag','plot_baseline'};
-            dflts  = {false,true};
-            [resp_trial_flag,plot_baseline] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'resp_trial_flag','plot_baseline','lineColor'};
+            dflts  = {false,true,[]};
+            [resp_trial_flag,plot_baseline,lineColor] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             
             
             if ~vd.usable(cell_k)
@@ -581,16 +581,18 @@ classdef vocalData < ephysData
             end
             
             tRange = [min(vd.time) max(vd.time)];
-            if strcmp(vd.callType,'call')
-                lineColor = 'r';
-            elseif strcmp(vd.callType,'echo')
-                lineColor = 'b';
-            elseif strcmp(vd.callType,'operant')
-                lineColor = 'g';
-            elseif strcmp(vd.callType,'operant_reward')
-                lineColor = 'cyan';
-            elseif strcmp(vd.callType,'social')
-                lineColor = 'b';
+            if isempty(lineColor)
+                if strcmp(vd.callType,'call')
+                    lineColor = 'r';
+                elseif strcmp(vd.callType,'echo')
+                    lineColor = 'b';
+                elseif strcmp(vd.callType,'operant')
+                    lineColor = 'g';
+                elseif strcmp(vd.callType,'operant_reward')
+                    lineColor = 'cyan';
+                elseif strcmp(vd.callType,'social')
+                    lineColor = 'b';
+                end
             end
             
             if nargin < 3
@@ -618,8 +620,12 @@ classdef vocalData < ephysData
                 fr = vd.avgFR{cell_k};
                 frDev = vd.devFR{cell_k}';
             end
-            
-            boundedline(vd.time,fr,frDev,lineColor,'alpha');
+            hold on
+            if exist('boundedline')
+                boundedline(vd.time,fr,frDev,lineColor,'alpha');
+            else
+                errorbar(vd.time,fr,frDev(:,1),frDev(:,2),lineColor,'CapSize',1);
+            end
             if plot_baseline
                 if vd.avgBaseline(cell_k) - vd.devBaseline(cell_k) > 0
                     plot(tRange,repmat(vd.avgBaseline(cell_k) - vd.devBaseline(cell_k),1,2),'k.-','LineWidth',2)
