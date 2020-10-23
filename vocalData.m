@@ -797,6 +797,13 @@ classdef vocalData < ephysData
                 
             end
         end
+        function logger_num = get_logger_num(vd,cell_k)
+            dateIdx = find(vd.recLogs.Date == vd.expDay(cell_k) & ~ismember(vd.recLogs.Session,{'operant','playback','echolocation'}));
+            batIdx = find(contains(vd.recLogs.Properties.VariableNames,'Bat_'));
+            current_bat_idx = batIdx(vd.recLogs{dateIdx,batIdx} == str2double(vd.batNum{cell_k}));
+            NL_idx = current_bat_idx + find(contains(vd.recLogs.Properties.VariableNames(current_bat_idx:end),'NL_'),1,'first')-1;
+            logger_num = vd.recLogs{dateIdx,NL_idx};
+        end
         
         function boutWF = getBoutWF(vd,cData,cell_k,call_k)
             [idx,callTrain] = callDataIdx(vd,cData,cell_k);
@@ -807,52 +814,85 @@ classdef vocalData < ephysData
                 boutWF = [boutWF zeros(1,round(cData.fs*(bout_call_pos(k+1,1)-bout_call_pos(k,2)))) cData.callWF{bout_call_idx(k)}'];
             end
         end
-        function [boutCallWF,bout_t,csc,csc_t,callSpikes,batNum,bout_call_nums] = get_call_bout_csc_spikes(vd,cData,bcData,callNum,call_offset,csc_nums)
-            cell_ks = find(cellfun(@(cell_call_nums) ismember(callNum,cell_call_nums),vd.callNum));
-            batNum = vd.batNum(cell_ks);
-            callSpikes = cell(1,length(cell_ks));
-            for k = 1:length(cell_ks)
-                trial_idx = vd.callNum{cell_ks(k)} == callNum;
-                callSpikes{k} = vd.callSpikes{cell_ks(k)}{trial_idx};
-            end
-            boutSeparation = 1;
+        function [boutCallWF,bout_t,csc,csc_t,callSpikes,cp,cell_ks] = get_call_bout_csc_spikes(vd,cData,bcData,callNum,varargin)
+            
+            pnames = {'csc_nums','call_offset','cell_ks','bNums','get_neural_data','filter_csc','boutSeparation','filter_freqs'};
+            dflts  = {[],3,[],[],true,false,0,[6e2 6e3]};
+            [csc_nums,call_offset,cell_ks,select_bat_nums,get_neural_data,filter_csc,boutSeparation,filter_cutoff_frequencies] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             bout_call_nums = get_call_bout_nums(cData,callNum,boutSeparation);
-            call_fNames = cData('callID',bout_call_nums).fName;
-            file_callPos = cData('callID',bout_call_nums).file_call_pos;
+            expDate = cData('callID',callNum).expDay;
+            call_fNames = cData('callID',bout_call_nums,'expDay',expDate).fName;
+            file_callPos = cData('callID',bout_call_nums,'expDay',expDate).file_call_pos;
+            bout_callPos = cData('callID',bout_call_nums,'expDay',expDate).callPos;
+            
+            if isempty(select_bat_nums)
+                batNums = cData('callID',bout_call_nums).batNum;
+                batNums = [batNums(~cellfun(@iscell,batNums))' batNums{cellfun(@iscell,batNums)}];
+                batNums = batNums(ismember(batNums,vd.batNums));
+                select_bat_idx = mode(cellfun(@(x) find(strcmp(x,vd.batNums)),batNums));
+                select_bat_nums = vd.batNums(select_bat_idx);
+            end
+            if isempty(cell_ks)
+                cell_ks = find(vd.expDay == expDate & strcmp(vd.batNum,select_bat_nums));
+                if isempty(cell_ks)
+                    get_neural_data = false;
+                end
+            end
+            
+            if isempty(csc_nums)
+                ttNum = mode(vd.tetrodeNum(cell_ks));
+                nCh_per_tt = 4;
+                batIdx = strcmp(vd.batNums,select_bat_nums{1});
+                [~,chIdx] = inRange(vd.activeChannels{batIdx},[(ttNum-1)*nCh_per_tt-1,(ttNum)*nCh_per_tt-1]);
+                csc_nums = vd.activeChannels{batIdx}(chIdx);
+            end
+            
             [~,boutCallWF] = get_bout_WF_manual(bcData,cData,call_fNames,file_callPos([1 end]),call_offset);
   
             bout_call_length = length(boutCallWF)/cData.fs;
-            bout_t = linspace(-call_offset,bout_call_length-call_offset,length(boutCallWF));
+            bout_t = linspace(call_offset(1),bout_call_length+call_offset(1),length(boutCallWF));
+            cp = 1e3*(bout_callPos([1 end]) + call_offset);
             
-            if nargin > 5
+            if get_neural_data
+                logger_num = num2str(get_logger_num(vd,cell_ks(1)));
                 b = vd.batIdx(cell_ks(1));
-                [~,cut_call_data,audio2nlg] = get_cell_info(vd,cell_ks(1));
-                [~,callTrain] = callDataIdx(vd,cData,cell_ks(1));
-                expDate = vd.cellInfo{cell_ks(1)}(1:strfind(vd.cellInfo{cell_ks(1)},vd.tetrodeStr)-1);
-                base_dir = [vd.baseDirs{b} 'bat' vd.batNum{cell_ks(1)} filesep 'neurologger_recording' expDate filesep];
-                filter_cutoff_frequencies=[600 6000];
+                [~,~,audio2nlg] = get_cell_info(vd,cell_ks(1));
+
+                exp_date_str = datestr(vd.expDay(cell_ks(1)),'mmddyyyy');
+                expDir = fullfile(vd.baseDirs{b},exp_date_str,'neurologgers',['logger' logger_num],'extracted_data');
                 csc_t = cell(1,length(csc_nums));
                 csc = cell(1,length(csc_nums));
                 filter_loaded = false;
-                call_idx = [cut_call_data.uniqueID] == callNum;
-                cp = repmat(cut_call_data(call_idx).corrected_callpos(1),1,2) + 1e3.*[-call_offset max(callTrain(callNum).relative_callPos(:))+call_offset];
+                callSpikes = cell(1,length(cell_ks));
+                k = 1;
+                for cell_k = cell_ks
+                    callSpikes{k} = getSpikes(vd,cell_k);
+                    callSpikes{k} = inRange(callSpikes{k},cp);
+                    callSpikes{k} = 1e-3*callSpikes{k} - bout_callPos(1);
+                    k = k + 1;
+                end
                 for k = 1:length(csc_nums)
-                    tsData = load([base_dir 'nlxformat' filesep 'CSC' num2str(csc_nums(k)) '.mat']);
-                    if ~filter_loaded
-                        sampling_freq=1/(tsData.sampling_period_usec/1e6);
+                    exp_date_str = datestr(vd.expDay(cell_ks(1)),'yyyymmdd');
+                    tsData = matfile(fullfile(expDir,[strjoin({vd.batNum{cell_ks(1)},exp_date_str,'CSC'},'_') num2str(csc_nums(k)) '.mat']));
+                    if ~filter_loaded && filter_csc
+                        sampling_freq=1/(tsData.Sampling_period_usec_Logger/1e6);
                         [b,a]=butter(6,filter_cutoff_frequencies/(sampling_freq/2),'bandpass');
                         filter_loaded = true;
                     end
-                    nSamp = length(tsData.AD_count_int16);
-                    timestamps_usec = get_timestamps_for_Nlg_voltage_all_samples(nSamp,tsData.indices_of_first_samples,tsData.timestamps_of_first_samples_usec,tsData.sampling_period_usec);
-                    timestamps_msec = 1e-3*timestamps_usec - audio2nlg.first_nlg_pulse_time;
-                    [~,csc_idx] = inRange(timestamps_msec,cp);
-                    csc{k} = filtfilt(b,a,double(tsData.AD_count_to_uV_factor*tsData.AD_count_int16(csc_idx)));
-                    csc_t{k} = linspace(-call_offset,1e-3*diff(cp)-call_offset,length(csc{k}));
+                    
+                    csc_idx = get_nlg_samples_from_timestamps(tsData.Indices_of_first_and_last_samples(:,1),tsData.Timestamps_of_first_samples_usec,audio2nlg,cp);
+                    if isempty(csc_idx)
+                        [csc,csc_t,callSpikes] = deal([]);
+                        return
+                    end
+                    csc{k} = double(tsData.AD_count_to_uV_factor*tsData.AD_count_int16(1,csc_idx));
+                    if filter_csc
+                        csc{k} = filtfilt(b,a,csc{k}); 
+                    end
+                    csc_t{k} = linspace(call_offset(1),1e-3*diff(cp)+call_offset(1),length(csc{k}));
                 end
             else
-                csc_t = [];
-                csc = [];
+                [csc,csc_t,callSpikes] = deal([]);
             end            
         end
         function [spikeCorr,p,spikes1,spikes2] = scCorr(vd,cell_1,cell_2,period)
@@ -954,13 +994,26 @@ classdef vocalData < ephysData
             for k = 1:n_used_cells
                 cell_k = cell_ks(k);
                 nTrial = length(vd.callSpikes{cell_k});
-                idx = ismember(cData.callID, vd.callNum{cell_k}) & cData.expDay == vd.expDay(cell_k);
-                ICI = [Inf; diff(cData.callPos(:,1))];
-                low_idx = find(cData.(varName)(idx)<thresh & ICI(idx) > range(timeWin));
-                high_idx = find(cData.(varName)(idx)>=thresh & ICI(idx) > range(timeWin));
+                callIdx = zeros(1,nTrial);
+                expIdx = cData.expDay == vd.expDay(cell_k);
+                for trial_k = 1:nTrial
+                    callIdx(trial_k) = find(cData.callID == vd.callNum{cell_k}(trial_k) & expIdx,1);
+                end
+                ICI = [Inf; diff(cData.callPos(callIdx,1))];
+                iciIdx = ICI > range(timeWin);
+                callIdx = callIdx(iciIdx);
+                nTrial = sum(iciIdx);
+                if length(thresh) == 1
+                    low_idx = find(cData.(varName)(callIdx)<thresh);
+                    high_idx = find(cData.(varName)(callIdx)>=thresh);
+                elseif length(thresh) == 2
+                    [~,range_idx] = inRange(cData.(varName)(callIdx),thresh);
+                    low_idx = find(range_idx);
+                    high_idx = find(~range_idx);
+                end
                 if length(low_idx) >= min_used_calls && length(high_idx) >= min_used_calls
-                    trialSpikes = vd.callSpikes{cell_k};
-                    cLength = vd.callLength{cell_k};
+                    trialSpikes = vd.callSpikes{cell_k}(iciIdx);
+                    cLength = vd.callLength{cell_k}(iciIdx);
                     fr = zeros(1,nTrial);
                     for tt = 1:nTrial
                         fr(tt) = length(inRange(trialSpikes{tt},timeWin + [0 cLength(tt)]))/range(timeWin + [0 cLength(tt)]);
