@@ -13,7 +13,7 @@ classdef ephysData
         expType
         callType
         
-        serverStr = 'server1';
+        serverStr = 'server_home';
         pathStr = 'users\maimon\';
         
         remote_drive_letter
@@ -52,12 +52,12 @@ classdef ephysData
                     
                     ed.batNums = {'14620','71334','65694','71360'};
                     ed.boxNums = num2cell(nan(1,length(ed.batNums)));
-                    ed.baseDirs = repmat({'E:\ephys\adult_recording\'},1,length(ed.batNums));
+                    ed.baseDirs = repmat({ed.serverPath},1,length(ed.batNums));
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
-                    ed.analysisDir = repmat({'E:\ephys\adult_recording\data_analysis_results\'},1,length(ed.batNums));
+                    ed.analysisDir = repmat({fullfile(ed.serverPath,'data_analysis_results')},1,length(ed.batNums));
                     ed.activeChannels = {0:15,0:15,0:15,[4:7 12:15]};
-                    ed.spike_data_dir = repmat({'E:\ephys\adult_recording\spike_data\'},1,length(ed.batNums));
+                    ed.spike_data_dir = repmat({fullfile(ed.serverPath,'spike_data')},1,length(ed.batNums));
                     ed.lfp_fs = 31250;
                     ed.lfp_data_dir = [];
                     
@@ -65,12 +65,12 @@ classdef ephysData
                     
                     ed.batNums = {'59886','65705','71382','65702'};
                     ed.boxNums = {'1','1','2','2'};
-                    ed.baseDirs = repmat({'E:\ephys\adult_operant_recording\'},1,length(ed.batNums));
+                    ed.baseDirs = repmat({ed.serverPath},1,length(ed.batNums));
                     ed.dateFormat = 'yyyyMMdd';
                     ed.birthDates = num2cell(repmat(NaT,1,length(ed.batNums)));
-                    ed.analysisDir = repmat({'E:\ephys\adult_operant_recording\data_analysis_results\'},1,length(ed.batNums));
+                    ed.analysisDir = repmat({fullfile(ed.serverPath,'data_analysis_results')},1,length(ed.batNums));
                     ed.activeChannels = {setdiff(0:15,10),0:15,0:15,setdiff(0:15,5)};
-                    ed.spike_data_dir =  repmat({'E:\ephys\adult_operant_recording\spike_data\'},1,length(ed.batNums));
+                    ed.spike_data_dir = repmat({fullfile(ed.serverPath,'spike_data')},1,length(ed.batNums));
                     ed.lfp_fs = 31250;
                     ed.lfp_data_dir = [];
                     
