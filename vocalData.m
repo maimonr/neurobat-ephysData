@@ -90,9 +90,9 @@ classdef vocalData < ephysData
     methods
         function vd = vocalData(varargin)
             
-            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls','operant_reward_status','useSNAP'};
-            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15,'rewardedOnly',false};
-            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls,operant_reward_status,useSNAP] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'callType','onset_or_offset','expType','vd_update','selectCells','selectCalls','cellType','minCalls','operant_reward_status','useSNAP','exclDates'};
+            dflts  = {'call','onset','juvenile',[],[],'selfCall','singleUnit',15,'rewardedOnly',false,datetime([],[],[])};
+            [callType,onset_or_offset,expType,vd_update,selectCells,selectCalls,cellType,minCalls,operant_reward_status,useSNAP,exclDates] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             
             vd = vd@ephysData(expType);
             
@@ -139,8 +139,15 @@ classdef vocalData < ephysData
                         cellInfo_regexp_str = '\d{8}_TT\d';
                 end
                 
-                nCells_to_process = length(spike_file_names);
                 
+                if ~isempty(exclDates)
+                    cellInfo = arrayfun(@(sp) regexp(sp.name,cellInfo_regexp_str,'match'),spike_file_names,'un',0);
+                    expDates = cellfun(@(sp) datetime(sp{1}(1:8),'InputFormat',vd.dateFormat),cellInfo);
+                    exclIdx = ismember(expDates,exclDates);
+                    spike_file_names = spike_file_names(~exclIdx);
+                end
+                
+                nCells_to_process = length(spike_file_names);
                 [vd.isolationDistance, vd.LRatio, vd.sortingQuality, vd.avgBaseline,...
                     vd.devBaseline, vd.respValency, vd.respStrength, vd.meanFR,...
                     vd.medianISI, vd.peak2trough, vd.spikeWidth, vd.duration,...
@@ -169,6 +176,7 @@ classdef vocalData < ephysData
                         
                         cellInfo = regexp(bat_spike_file_names(d).name,cellInfo_regexp_str,'match');
                         cellInfo = cellInfo{1};
+                        vd.expDay(cell_k) = datetime(cellInfo(1:8),'InputFormat',vd.dateFormat);
                         if use_select_cells && ~any(strcmp(cellInfo,selectCells))
                             cell_k = cell_k + 1;
                             continue
@@ -186,9 +194,9 @@ classdef vocalData < ephysData
                                 vd.LRatio(cell_k) = sortingInfo(sortingInfo_idx).LRatio;
                                 vd.sortingQuality(cell_k) = sortingInfo(sortingInfo_idx).sortingQuality;
                             else
-                                if strcmp(vd.callType,'call') % sorting quality for this experiment is calculated for each session
+                                if ismember(vd.callType,{'call','bhvTime'}) % sorting quality for this experiment is calculated for each session
                                     sorting_info_str = 'communication';
-                                elseif any(strcmp(vd.callType,{'operant','operant_reward'}))
+                                elseif ismember(vd.callType,{'operant','operant_reward'})
                                     sorting_info_str = 'operant';
                                 end
                                 vd.isolationDistance(cell_k) = sortingInfo(sortingInfo_idx).isolationDistance.(sorting_info_str);
@@ -197,7 +205,6 @@ classdef vocalData < ephysData
                             end
                         end
                         
-                        vd.expDay(cell_k) = datetime(cellInfo(1:8),'InputFormat',vd.dateFormat);
                         if use_tetrode_depths
                             try
                                 vd.tetrodeDepth(cell_k) = tetrodeDepths{tetrodeDepths.Date==vd.expDay(cell_k),vd.tetrodeNum(cell_k)+1};
