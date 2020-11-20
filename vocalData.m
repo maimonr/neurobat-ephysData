@@ -983,20 +983,15 @@ classdef vocalData < ephysData
             nonBoutCalls = callFR(3,:);
             
         end
-        function [low_FR, high_FR, low_idx, high_idx] = FR_by_audio_feature(vd,cData,varName,thresh,cell_ks,timeWin)
+        function [low_FR, high_FR, low_idx, high_idx] = FR_by_audio_feature(vd,cData,varName,thresh,varargin)
             
-            if nargin < 5
-                cell_ks = vd.responsiveCells;
-                timeWin = [-vd.preCall vd.postCall];
-            elseif nargin < 6
-                timeWin = [-vd.preCall vd.postCall];
-            end
+            pnames = {'cell_ks','timeWin','minCalls','selectCalls','socialMap'};
+            dflts  = {vd.responsiveCells,[-vd.preCall vd.postCall],10,vd.selectCalls,[]};
+            [cell_ks,timeWin,min_used_calls,select_call_type,socialMap] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
             n_used_cells = length(cell_ks);
             
-            low_FR = cell(1,n_used_cells);
-            high_FR = cell(1,n_used_cells);
-            
-            min_used_calls = 10;
+            [low_FR, high_FR, low_idx, high_idx] = deal(cell(1,n_used_cells));
             
             for k = 1:n_used_cells
                 cell_k = cell_ks(k);
@@ -1008,25 +1003,58 @@ classdef vocalData < ephysData
                 end
                 ICI = [Inf; diff(cData.callPos(callIdx,1))];
                 iciIdx = ICI > range(timeWin);
-                callIdx = callIdx(iciIdx);
-                nTrial = sum(iciIdx);
-                if length(thresh) == 1
-                    low_idx = find(cData.(varName)(callIdx)<thresh);
-                    high_idx = find(cData.(varName)(callIdx)>=thresh);
-                elseif length(thresh) == 2
-                    [~,range_idx] = inRange(cData.(varName)(callIdx),thresh);
-                    low_idx = find(range_idx);
-                    high_idx = find(~range_idx);
+                unIDIdx = strcmp(cData.batNum(callIdx),'unidentified');
+                multi_bat_idx = cellfun(@iscell,cData.batNum(callIdx));
+                switch select_call_type
+                    case 'selfCall'
+                        call_type_idx = strcmp(cData.batNum(callIdx),vd.batNum{cell_k});
+                    case 'otherCall'
+                        call_type_idx = ~strcmp(cData.batNum(callIdx),vd.batNum{cell_k});
+                    case 'allCall'
+                        call_type_idx = strcmp(cData.batNum(callIdx),vd.batNum{cell_k});
                 end
-                if length(low_idx) >= min_used_calls && length(high_idx) >= min_used_calls
-                    trialSpikes = vd.callSpikes{cell_k}(iciIdx);
-                    cLength = vd.callLength{cell_k}(iciIdx);
+                
+                call_type_idx = call_type_idx & ~unIDIdx & ~multi_bat_idx;
+                used_call_idx = iciIdx & call_type_idx;
+                
+                switch varName
+                    case 'socialHierarchy'
+                        used_call_idx = used_call_idx & isKey(socialMap,cellfun(@str2double,cData.batNum(callIdx),'un',0));
+                        callIdx = callIdx(used_call_idx);
+                        call_bat_nums = cData.batNum(callIdx);
+                        var_to_thresh = cellfun(@(bNum) socialMap(str2double(bNum)),call_bat_nums);
+                    case 'pairwiseMeasure'
+                        bat_pair_keys = cell(length(callIdx),1);
+                        bat_pair_keys(~multi_bat_idx) = cellfun(@(bNum) strjoin(sort({vd.batNum{cell_k},bNum}),'-'),cData.batNum(callIdx(~multi_bat_idx)),'un',0);
+                        used_call_idx = used_call_idx & isKey(socialMap,bat_pair_keys);
+                        bat_pair_keys = bat_pair_keys(used_call_idx);
+                        var_to_thresh = cellfun(@(bPair) socialMap(bPair),bat_pair_keys);
+                    otherwise
+                        callIdx = callIdx(used_call_idx);
+                        var_to_thresh = cData.(varName)(callIdx);
+                end
+                
+                nTrial = sum(used_call_idx);
+                
+                if length(thresh) == 1
+                    low_idx{k} = find(var_to_thresh<thresh);
+                    high_idx{k} = find(var_to_thresh>=thresh);
+                elseif length(thresh) == 2
+                    [~,range_idx] = inRange(var_to_thresh,thresh);
+                    low_idx{k} = find(range_idx);
+                    high_idx{k} = find(~range_idx);
+                end
+                if length(low_idx{k}) >= min_used_calls && length(high_idx{k}) >= min_used_calls
+                    trialSpikes = vd.callSpikes{cell_k}(used_call_idx);
+                    cLength = vd.callLength{cell_k}(used_call_idx);
                     fr = zeros(1,nTrial);
                     for tt = 1:nTrial
                         fr(tt) = length(inRange(trialSpikes{tt},timeWin + [0 cLength(tt)]))/range(timeWin + [0 cLength(tt)]);
                     end
-                    low_FR{k} = fr(low_idx);
-                    high_FR{k} = fr(high_idx);
+                    low_FR{k} = fr(low_idx{k});
+                    high_FR{k} = fr(high_idx{k});
+                else
+                    [low_FR{k},high_FR{k}] = deal(NaN);
                 end
             end
         end
