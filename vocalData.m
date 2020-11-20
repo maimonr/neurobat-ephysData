@@ -2285,7 +2285,35 @@ end
 
 end
 
-function [callSpikes, callNum, call_bat_num, callLength, usedCalls] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,varargin)
+function cut_call_data = get_bhv_time_events(vd,cell_k,cut_call_data)
+
+bhvDir = fullfile(vd.serverPath,'bhv_data','temporal_annotation');
+bhv_exp_date_str = datestr(vd.expDay(cell_k),'mmddyyyy');
+bhvFname = fullfile(bhvDir,[bhv_exp_date_str '_call_info_bat.mat']);
+if ~exist(bhvFname,'file')
+    cut_call_data = [];
+    return
+end
+
+s = load(bhvFname);
+call_info = s.call_info;
+bhv_time_idx = ~cellfun(@isempty,[call_info.behaviorTime]);
+used_call_IDs = [call_info.callID];
+dT = nan(1,length(cut_call_data));
+used_call_idx = false(1,length(cut_call_data));
+for call_k = 1:length(cut_call_data)
+    call_idx = cut_call_data(call_k).uniqueID == used_call_IDs & bhv_time_idx;
+    if sum(call_idx) == 1
+        dT(call_k) = cut_call_data(call_k).corrected_callpos(1) - call_info(call_idx).behaviorTime{1};
+        cut_call_data(call_k).corrected_callpos = repmat(call_info(call_idx).behaviorTime{1},1,2);
+        used_call_idx(call_k) = true;
+    end
+end
+
+cut_call_data = cut_call_data(used_call_idx);
+end
+
+function [callSpikes, callNum, call_bat_num, callLength, usedCalls] = get_used_call_spikes(vd,cell_k,stabilityBounds,cut_call_data,varargin)
 
 pnames = {'selectedCalls','timestamps'};
 dflts  = {[cut_call_data.uniqueID],[]};
