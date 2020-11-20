@@ -225,7 +225,7 @@ classdef vocalData < ephysData
                         timestamps = getSpikes(vd,cell_k);
                         
                         [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
-                            get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
+                            get_used_call_spikes(vd,cell_k,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         vd.daysOld(cell_k) = days(vd.expDay(cell_k) - vd.birthDates{b});
                         
@@ -290,7 +290,7 @@ classdef vocalData < ephysData
                         end
                         
                         [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k},vd.usedCalls{cell_k}] = ...
-                            get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
+                            get_used_call_spikes(vd,cell_k,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         vd.sortingQuality(cell_k) = vd.sortingThreshold;
                         if checkUsability(vd,cell_k) && success
@@ -360,7 +360,7 @@ classdef vocalData < ephysData
                         timestamps = getSpikes(vd,cell_k);
                         
                         [vd.callSpikes{cell_k}, vd.callNum{cell_k}, vd.call_bat_num{cell_k}, vd.callLength{cell_k}, vd.usedCalls{cell_k}] = ...
-                            get_used_call_spikes(vd,stabilityBounds,cut_call_data,'timestamps',timestamps);
+                            get_used_call_spikes(vd,cell_k,stabilityBounds,cut_call_data,'timestamps',timestamps);
                         
                         [vd.meanFR(cell_k), vd.medianISI(cell_k), vd.peak2trough(cell_k),...
                             vd.spikeWidth(cell_k), vd.avg_spike(cell_k,:), vd.duration(cell_k)] = get_spike_stats(timestamps,ttDir);
@@ -750,7 +750,7 @@ classdef vocalData < ephysData
             axisHandle.YLabel.String = 'Cell Number';
             axisHandle.FontSize = params.fontSize;
             colormap(axisHandle,params.cmap)
-            yticks_interval = max(50,100*round(length(cell_ks)/3/100));
+            yticks_interval = 5*round(length(cell_ks)/5);
             axisHandle.YTick = yticks_interval:yticks_interval:length(cell_ks);
             axisHandle.XTick = sort([params.xlims 0]);
             axisHandle.XLim = params.xlims;
@@ -1530,8 +1530,17 @@ classdef vocalData < ephysData
                     end
                     
                     percent_session_calls(k) = 100*total_call_length/total_session_length;
+                    used_call_idx = ~[cut_call_data.noise] & ~cellfun(@iscell,{cut_call_data.batNum});
+                    cut_call_data = cut_call_data(used_call_idx);
                     
-                    cut_call_data = cut_call_data(~[cut_call_data.noise]);
+                    switch vd.selectCalls
+                        case 'selfCall'
+                            used_call_idx = strcmp({cut_call_data.batNum},vd.batNum{cell_ks(k)});
+                        case 'otherCall'
+                            used_call_idx = ~strcmp({cut_call_data.batNum},vd.batNum{cell_ks(k)});
+                    end
+                    cut_call_data = cut_call_data(used_call_idx);
+                    
                     callPos = vertcat(cut_call_data.corrected_callpos);
                     isCall = false(1,length(event_pos_data));
                     for event_k = 1:length(event_pos_data)
@@ -1635,9 +1644,9 @@ classdef vocalData < ephysData
         
         function [r,R] = trial_fr_consistency(vdList,cell_ks,varargin)
             
-            pnames = {'timeLim','nBoot','minCall'};
-            dflts  = {vdList(1).spikeRange,1e3,vdList(1).minCalls};
-            [timeLims,nSubsample,minCall] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            pnames = {'timeLim','nBoot','minCall','minSpike'};
+            dflts  = {vdList(1).spikeRange,1e3,vdList(1).minCalls,vdList(1).minSpikes};
+            [timeLims,nSubsample,minCall,minSpike] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             [~,t_idx] = inRange(vdList(1).time,timeLims);
             [r,R] = deal(nan(1,length(cell_ks)));
             k = 1;
@@ -1646,12 +1655,14 @@ classdef vocalData < ephysData
                 if length(vdList) == 1
                     trialFR = vdList.trialFR(cell_k);
                     used_calls = vdList.usedCalls{cell_k};
+                    trialFR = trialFR(used_calls,t_idx)';
+                    avg_trial_FR = mean(trialFR,'all');
+                    
                     n_used_calls = sum(used_calls);
-                    if n_used_calls < minCall
+                    if n_used_calls < minCall || avg_trial_FR < minSpike
                         k = k + 1;
                         continue
                     end
-                    trialFR = trialFR(used_calls,t_idx)';
                     
                     trainIdx = 1:2:minCall;
                     testIdx = setdiff(1:minCall,trainIdx);
@@ -1792,7 +1803,7 @@ classdef vocalData < ephysData
                     [stabilityBounds, cut_call_data] = getCellInfo(vd,cell_k,'stabilityBounds','cut_call_data');
                     callNums = vd.callNum{cell_k};
                     selectedCalls = selecFun(cData,callNums)';
-                    [~,~,~,~,usedCallNums] = get_used_call_spikes(vd,stabilityBounds,cut_call_data,'selectedCalls',selectedCalls);
+                    [~,~,~,~,usedCallNums] = get_used_call_spikes(vd,cell_k,stabilityBounds,cut_call_data,'selectedCalls',selectedCalls);
                     vd.usedCalls{cell_k} = usedCallNums;
                 catch err
                     keyboard
@@ -1889,7 +1900,7 @@ classdef vocalData < ephysData
             end           
             
             nBat = length(vd1.batNums);
-            superclass_property_length = cellfun(@(x) length(vd1.(x)),superclass_property_names);
+            superclass_property_length = cellfun(@(x) size(vd1.(x),1),superclass_property_names);
             str_property_idx = arrayfun(@(prop) ischar(vd1.(prop.Name)),metaVD.SuperclassList.PropertyList);
             bat_superclass_property_idx = superclass_property_length == nBat & ~str_property_idx;
             
@@ -1975,6 +1986,8 @@ b = vd.batIdx(cell_k);
 cellInfo = vd.cellInfo{cell_k};
 baseDir = vd.baseDirs{b};
 batNum = vd.batNums{b};
+exp_date_str = cellInfo(1:8);
+[stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
 
 if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
     
@@ -1982,10 +1995,9 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
     %       If we want to calculate spike waveform stats, need to include path to actual .ntt file
     ttDir = [];
     call_data_dir = fullfile(baseDir,'call_data');
-    exp_date_str = cellInfo(1:8);
     
     try
-        if any(strcmp(vd.callType,{'call','echo'}))
+        if ismember(vd.callType,{'call','echo','bhvTime'})
             audio2nlg = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat'])); % load fit data to sync audio to nlg data
         elseif strcmp(vd.callType,'operant')
             s = load(fullfile(call_data_dir,[exp_date_str '_audio2nlg_fit.mat']),'first_nlg_pulse_time','first_audio_pulse_time');
@@ -1999,7 +2011,6 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
             audio2nlg.first_audio_pulse_time = s.first_audio_pulse_time;
         end
     catch
-        [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
         return
     end
     
@@ -2014,11 +2025,11 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
     
     if any(strcmp(varargin,'cut_call_data'))
         
-        if any(strcmp(vd.callType,{'call','operant','social'}))
+        if any(strcmp(vd.callType,{'call','operant','social','bhvTime'}))
             
             switch vd.callType
                 
-                case 'call'
+                case {'call','bhvTime'}
                     cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data.mat']);
                 case 'operant'
                     cut_call_fname = fullfile(call_data_dir,[exp_date_str '_cut_call_data_operant_box_' vd.boxNums{b} '.mat']);
@@ -2034,59 +2045,33 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
                 s = load(cut_call_fname);
                 cut_call_data = s.cut_call_data;
             else
-                [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
                 return
             end
-            
-            if strcmp(vd.selectCalls,'selfCall')
-                used_call_idx =  find(strcmp({cut_call_data.batNum},batNum));
-                not_used_call_idx = find(~strcmp({cut_call_data.batNum},batNum) & ~strcmp({cut_call_data.batNum},'noise'));
-            elseif  strcmp(vd.selectCalls,'otherCall')
-                used_call_idx = find(~strcmp({cut_call_data.batNum},batNum) & ~strcmp({cut_call_data.batNum},'noise'));
-                not_used_call_idx = find(strcmp({cut_call_data.batNum},batNum));
-            elseif strcmp(vd.selectCalls,'allCall')
-                used_call_idx = find(~strcmp({cut_call_data.batNum},'noise'));
-                not_used_call_idx = [];
-            end
-            
-            if vd.exclude_neighboring_calls && ~isempty(used_call_idx) && ~isempty(not_used_call_idx)
-                used_call_pos = vertcat(cut_call_data(used_call_idx).corrected_callpos);
-                not_used_bat_call_pos = vertcat(cut_call_data(not_used_call_idx).corrected_callpos) + 1e3*vd.spikeRange;
-                not_used_bat_call_pos = reshape(not_used_bat_call_pos,[],1);
-                
-                nCall = length(used_call_idx);
-                neighboring_call_idx  = false(1,nCall);
-                
-                for call_k = 1:nCall
-                    cp = used_call_pos(call_k,:);
-                    neighboring_call_idx(call_k) = any(diff(sign(repmat(cp,size(not_used_bat_call_pos,1),1) - repmat(not_used_bat_call_pos,1,2)),[],2));
-                end
-                used_call_idx = used_call_idx(~neighboring_call_idx);
-            end
-            
+            used_call_idx = ~strcmp({cut_call_data.batNum},'noise');
+            cut_call_data = cut_call_data(used_call_idx);
+
             if strcmp(vd.callType,'operant') && any(strcmp(vd.operant_reward_status,{'rewardedOnly','notRewarded'}))
                 if ~isempty(operantEvents)
                     rewarded_event_idx = operantEvents.food_port_status.FoodPortBack | operantEvents.food_port_status.FoodPortFront;
                     rewarded_event_times = operantEvents.eventTimes(rewarded_event_idx);
-                    used_call_pos = vertcat(cut_call_data(used_call_idx).corrected_callpos);
+                    used_call_pos = vertcat(cut_call_data.corrected_callpos);
                     
-                    nCall = length(used_call_idx);
+                    nCall = length(cut_call_data);
                     dT_call = nan(1,nCall);
                     
                     for call_k = 1:nCall
                         dT_call(call_k) = min(abs(used_call_pos(call_k,1) - rewarded_event_times));
                     end
                     if strcmp(vd.operant_reward_status,'rewardedOnly')
-                        used_call_idx = used_call_idx(dT_call < operant_reward_delay);
+                        used_call_idx = dT_call < operant_reward_delay;
                     elseif strcmp(vd.operant_reward_status,'notRewarded')
-                        used_call_idx = used_call_idx(dT_call > operant_reward_delay);
+                        used_call_idx = dT_call > operant_reward_delay;
                     end
                 else
                     used_call_idx = [];
                 end
+                cut_call_data = cut_call_data(used_call_idx);
             end
-            
-            cut_call_data = cut_call_data(used_call_idx);
             
         elseif strcmp(vd.callType,'echo')
             cut_echo_fname = fullfile(call_data_dir,[exp_date_str '_cut_echo_data.mat']);
@@ -2094,7 +2079,6 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
                 s = load(cut_echo_fname);
                 cut_call_data = s.cut_call_data;
             else
-                [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = deal([]);
                 return
             end
         elseif strcmp(vd.callType,'operant_reward')
@@ -2112,11 +2096,13 @@ if any(strcmp(vd.expType,{'adult','adult_operant','adult_social'}))
             else
                 cut_call_data = [];
             end
-            
-            
         end
     else
         cut_call_data = [];
+    end
+    
+    if strcmp(vd.callType,'bhvTime')
+        cut_call_data = get_bhv_time_events(vd,cell_k,cut_call_data);
     end
     
     stabilityBounds = stabilityBounds - audio2nlg.first_nlg_pulse_time;
@@ -2336,24 +2322,16 @@ usedCalls = true(1,nCalls);
 
 for call = 1:nCalls % iterate through all the calls within this .wav file
     cp = cut_call_data(call).corrected_callpos; % time of onset and offset of the call of interest on this iteration
-    callposOffset = [cp(1)+spikeRange(1), cp(2)+spikeRange(2)]; % total time window around call of interest
     
     if ~any(isnan(cp)) % check that the TTL alignment worked for this call
-        
+        callposOffset = [cp(1)+spikeRange(1), cp(2)+spikeRange(2)]; % total time window around call of interest
         in_stable_range = ~strcmp(vd.cellType,'singleUnit'); % Initialize as false only if we're using single units (MUA is always "stable")
         for bound_k = 1:size(stabilityBounds,1) % check that this call is within timeframe that this cell is stable
             in_stable_range = in_stable_range || (callposOffset(1) > stabilityBounds(bound_k,1) && callposOffset(2) < stabilityBounds(bound_k,2));
         end
         
         if in_stable_range
-            
-            if (strcmp(vd.onset_or_offset,'onset') && any(all_call_times > (cp(1) + spikeRange(1)) & all_call_times < cp(1))) || ... skip any calls within a call train
-                    (strcmp(vd.onset_or_offset,'offset') && any(all_call_times < (cp(2) + spikeRange(2)) & all_call_times > cp(2))) || ...
-                    ~(ismember(cut_call_data(call).uniqueID,selectedCalls))
-                
-                usedCalls(call_k) = false;
-            end
-            
+            usedCalls(call_k) = determine_used_call(vd,cell_k,call,cut_call_data,all_call_times,selectedCalls);
             if ~isempty(timestamps)
                 relativeCP = cp(strcmp({'onset','offset'},vd.onset_or_offset)); % choose beginning or end of call
                 timestampsCall = inRange(timestamps,callposOffset); % all spikes occuring within that time window
@@ -2378,6 +2356,54 @@ callNum = callNum(1:nCalls);
 call_bat_num = call_bat_num(1:nCalls);
 callLength = callLength(1:nCalls);
 usedCalls = usedCalls(1:nCalls);
+end
+
+function usedCall = determine_used_call(vd,cell_k,call,cut_call_data,all_call_times,selectedCalls)
+cp = cut_call_data(call).corrected_callpos; % time of onset and offset of the call of interest on this iteration
+spikeRange = 1e3*vd.spikeRange;
+
+switch vd.onset_or_offset % skip any calls within a call train
+    case 'onset'
+        [~,call_train_idx] = inRange(all_call_times,[cp(1)+spikeRange(1) cp(1)],'exclusive');
+    case 'offset'
+        [~,call_train_idx] = inRange(all_call_times,[cp(2) cp(2)+spikeRange(2)],'exclusive');
+end
+
+switch vd.selectCalls
+    case 'selfCall'
+        selectedCall = any(strcmp(cut_call_data(call).batNum,vd.batNum{cell_k}));
+    case 'otherCall'
+        selectedCall = ~any(strcmp(cut_call_data(call).batNum,vd.batNum{cell_k}));
+end
+
+
+if any(call_train_idx) || ~(ismember(cut_call_data(call).uniqueID,selectedCalls)) || ~selectedCall
+    usedCall = false;
+    return
+else
+    usedCall = true;
+end
+
+if vd.exclude_neighboring_calls
+    switch vd.onset_or_offset
+        case 'onset'
+            [~,call_train_idx] = inRange(all_call_times,[cp(1) cp(1)+spikeRange(2)],'exclusive');
+        case 'offset'
+            [~,call_train_idx] = inRange(all_call_times,[cp(2)+spikeRange(1) cp(2)],'exclusive');
+    end
+    call_train_idx = round(find(call_train_idx)/2);
+    call_train_bat_nums = {cut_call_data(call_train_idx).batNum};
+    multi_bat_idx = cellfun(@iscell,call_train_bat_nums);
+    call_train_bat_nums = unique([call_train_bat_nums(~multi_bat_idx) call_train_bat_nums{multi_bat_idx}]);
+    switch vd.selectCalls
+        case 'selfCall'
+            neighboringCall = any(~strcmp(call_train_bat_nums,vd.batNum{cell_k}));
+        case 'otherCall'
+            neighboringCall = any(strcmp(call_train_bat_nums,vd.batNum{cell_k}));
+    end
+    usedCall = ~neighboringCall;
+end
+
 end
 
 function [baselineMean, baselineStd] = calculate_baseline(vd,cell_k,timestamps,cut_call_data)
@@ -3028,10 +3054,22 @@ end
 
 end
 
-function [xSub,idx] = inRange(x,bounds)
+function [xSub,idx] = inRange(x,bounds,varargin)
+
+if nargin > 2
+    inclusionType = varargin{1};
+else
+    inclusionType = 'inclusive';
+end
 
 bounds = sort(bounds);
-idx = x>bounds(1) & x<= bounds(2);
+switch inclusionType
+    case 'inclusive'
+        idx = x>bounds(1) & x<= bounds(2);
+    case 'exclusive'
+        idx = x>bounds(1) & x< bounds(2);
+end
+    
 xSub = x(idx);
 
 
