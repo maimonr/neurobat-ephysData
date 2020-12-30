@@ -1292,20 +1292,19 @@ classdef vocalData < ephysData
             end
 
         end
-        function [indv_bat_fr, other_bat_fr, p] = get_indv_bat_fr(vd,cell_k,varargin)
+        function [indv_bat_fr, other_bat_fr, indv_bat_fr_callIDs, other_bat_fr_callIDs, p, dFR] = get_indv_bat_fr(vd,cell_k,varargin)
             
             pnames = {'call_dist_map','call_dist_thresh','minCalls','responseRange'};
             dflts  = {[],25,vd.minCalls,[-vd.preCall vd.postCall]};
             [call_dist_map, call_dist_thresh, min_bat_calls, responseRange] = internal.stats.parseArgs(pnames,dflts,varargin{:});
             
-            [indv_bat_fr, other_bat_fr, p] = deal(NaN);
+            [indv_bat_fr, other_bat_fr, indv_bat_fr_callIDs, other_bat_fr_callIDs, p, dFR]  = deal(NaN);
             if ~vd.usable(cell_k)
                 return
             end
             [~,call_t_idx] = inRange(vd.time,responseRange);
             
             self_bat_num = vd.batNum{cell_k};
-            trialFR = vd.trialFR(cell_k);
             calling_bat_nums = vd.call_bat_num{cell_k};
             calling_bat_nums(cellfun(@iscell,calling_bat_nums)) = {'unidentified'};
             calling_bat_nums = categorical(calling_bat_nums);
@@ -1326,16 +1325,24 @@ classdef vocalData < ephysData
             
             indv_bat_fr = containers.Map('KeyType','double','ValueType','any');
             other_bat_fr = containers.Map('KeyType','double','ValueType','any');
+            indv_bat_fr_callIDs = containers.Map('KeyType','double','ValueType','any');
+            other_bat_fr_callIDs = containers.Map('KeyType','double','ValueType','any');
             p = containers.Map('KeyType','double','ValueType','any');
+            dFR = containers.Map('KeyType','double','ValueType','any');
             for bat_num = used_bat_nums
                 callIdx = calling_bat_nums == bat_num & used_call_idx;
                 batKey = str2double(char(bat_num));
-                indv_bat_fr(batKey) = trialFR(callIdx,:);
-                
-                other_call_idx = calling_bat_nums ~= bat_num & used_call_idx;
-                if sum(callIdx) > min_bat_calls
-                    other_bat_fr(batKey) = trialFR(other_call_idx,:);
-                    p = ranksum(mean(trialFR(callIdx,call_t_idx),2),mean(trialFR(other_call_idx,call_t_idx),2));
+                frCall = vd.trialFR(cell_k,'callIdx',callIdx);
+                indv_bat_fr(batKey) = frCall;
+                indv_bat_fr_callIDs(batKey) = vd.callNum{cell_k}(callIdx);
+                other_call_idx = calling_bat_nums ~= bat_num & calling_bat_nums ~= categorical({self_bat_num}) & used_call_idx;
+                if sum(callIdx) > min_bat_calls && sum(other_call_idx) > min_bat_calls
+                    fr_other_call = vd.trialFR(cell_k,'callIdx',other_call_idx);
+                    other_bat_fr(batKey) = fr_other_call;
+                    other_bat_fr_callIDs(batKey) = vd.callNum{cell_k}(other_call_idx);
+                    p(batKey) = ranksum(mean(frCall(:,call_t_idx),2),mean(fr_other_call(:,call_t_idx),2));
+                    sigma = std(mean([frCall(:,call_t_idx);fr_other_call(:,call_t_idx)],2));
+                    dFR(batKey) = (mean(frCall(:,call_t_idx),'all') - mean(fr_other_call(:,call_t_idx),'all'))./sigma;
                 end
             end
             
@@ -1750,22 +1757,30 @@ classdef vocalData < ephysData
         function [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = get_cell_info(vd,cell_k)
             [stabilityBounds, cut_call_data, audio2nlg, ttDir, spikeDir, success] = getCellInfo(vd,cell_k,'stabilityBounds','cut_call_data');
         end
-        function trialFR = trialFR(vd,cell_k)
+        function trialFR = trialFR(vd,cell_k,varargin)
+            pnames = {'callIdx'};
+            dflts  = {[]};
+            [call_ks] = internal.stats.parseArgs(pnames,dflts,varargin{:});
+            
+            if isempty(call_ks)
+               call_ks = true(1,size(vd.trial_spike_train{cell_k},1)); 
+            end
+            
             switch vd.kernelType
                 case 'manual'
                     
                     bw = vd.frBandwidth{cell_k};
                     f = gaussFilter(vd.time,bw);
-                    spike_train = full(vd.trial_spike_train{cell_k});
+                    spike_train = full(vd.trial_spike_train{cell_k}(call_ks,:));
                     trialFR = conv2(1,f,spike_train,'same')/vd.dT;
                     
                 case 'fixedOpt'
                     
-                    trialFR = vd.stored_trial_fr{cell_k};
+                    trialFR = vd.stored_trial_fr{cell_k}(call_ks,:);
                     
                 case 'varOpt'
                     
-                    trialFR = vd.stored_trial_fr{cell_k};
+                    trialFR = vd.stored_trial_fr{cell_k}(call_ks,:);
                     
             end
             
@@ -2374,6 +2389,8 @@ switch vd.selectCalls
         selectedCall = any(strcmp(cut_call_data(call).batNum,vd.batNum{cell_k}));
     case 'otherCall'
         selectedCall = ~any(strcmp(cut_call_data(call).batNum,vd.batNum{cell_k}));
+    case 'allCall'
+        selectedCall = true;
 end
 
 
@@ -2400,6 +2417,8 @@ if vd.exclude_neighboring_calls
             neighboringCall = any(~strcmp(call_train_bat_nums,vd.batNum{cell_k}));
         case 'otherCall'
             neighboringCall = any(strcmp(call_train_bat_nums,vd.batNum{cell_k}));
+        case 'allCall'
+            neighboringCall = false;
     end
     usedCall = ~neighboringCall;
 end
